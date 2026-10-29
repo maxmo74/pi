@@ -95,7 +95,7 @@ async function main(args) {
 		console.log(`WARNING: LIVE SESSION STORAGE: ${profile}`);
 		console.log("Experimental: use disposable sessions only. Moves change ORIGINAL session files; project files are also live.");
 		console.log(`Verified backups: ${join(profile, "session-move-backups")}`);
-		console.log("Close older Pi instances before testing moves. Do not concurrently fork, import, rename or delete the test session.");
+		console.log("Close other Pi instances before testing moves; on Linux untracked ones are refused too. Do not concurrently fork, import, rename or delete the test session.");
 		const prompt = createInterface({ input: process.stdin, output: process.stdout });
 		let answer;
 		try { answer = await prompt.question("Type LIVE to continue (anything else cancels): "); }
@@ -126,7 +126,7 @@ async function main(args) {
 	console.log(`Test profile: ${profile}`);
 	if (args.includes("--prepare") || args.includes("--profile")) return;
 	console.log("EXPERIMENTAL: session moves affect copies only. Project files are NOT sandboxed.");
-	console.log("Tab → choose a session from elsewhere → Ctrl+Y. Older Pi processes may block moves.");
+	console.log("Tab → choose a session from elsewhere → Ctrl+Y. Other Pi instances holding the session block moves.");
 	console.log("No credentials were copied. Picker testing needs no login; /login is separate in this profile.");
 	const env = { ...process.env, PI_CODING_AGENT_DIR: profile };
 	delete env.PI_CODING_AGENT_SESSION_DIR;

@@ -16,7 +16,7 @@ vi.mock("node:child_process", async (importOriginal) => ({
 
 const unavailableTrash = { pid: 0, output: [], stdout: "", stderr: "", status: 1, signal: null };
 
-describe.skipIf(process.platform !== "linux")("coordinated session deletion", () => {
+describe("coordinated session deletion", () => {
 	let root: string;
 	let source: string;
 	let target: string;
@@ -66,7 +66,8 @@ describe.skipIf(process.platform !== "linux")("coordinated session deletion", ()
 		expect(readFileSync(moved)).toEqual(before);
 	});
 
-	it("fails closed when an older Pi instance does not report ownership", () => {
+	// Detecting non-cooperating Pi processes relies on the Linux process table.
+	it.skipIf(process.platform !== "linux")("fails closed when an older Pi instance does not report ownership", () => {
 		vi.mocked(childProcess.execFileSync).mockReturnValue("999999 pi pi\n");
 		expect(deleteSessionFile(source)).toMatchObject({
 			ok: false,

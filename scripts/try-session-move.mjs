@@ -28,7 +28,7 @@ for (const [cwd, name] of [[source, "Move this demo session"], [target, "Already
 writeFileSync(join(profile, "settings.json"), JSON.stringify({ fullscreen: false }));
 console.log(`Isolated demo: ${sandbox}`);
 console.log("Tab → select 'Move this demo session' → Ctrl+Y → Enter (or Escape to cancel).");
-console.log("Older Pi processes should cause a refusal. Close them to test a successful move.");
+console.log("A Pi instance already holding this session causes a refusal; on Linux untracked Pi processes do too. Close them to test a successful move.");
 console.log("No real sessions or credentials are copied. The demo directory is retained for inspection.");
 const env = { ...process.env, PI_CODING_AGENT_DIR: profile };
 delete env.PI_CODING_AGENT_SESSION_DIR;

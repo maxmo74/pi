@@ -7,6 +7,7 @@ import {
 	mkdtempSync,
 	readdirSync,
 	readFileSync,
+	realpathSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
@@ -23,8 +24,8 @@ vi.mock("node:child_process", async (importOriginal) => ({
 	execFileSync: vi.fn(),
 }));
 
-// Mock only legacy-process discovery: all session registrations and filesystem mutations are real.
-describe.skipIf(process.platform !== "linux")("session move", () => {
+// Only legacy process discovery is mocked: all session registrations and filesystem mutations are real.
+describe("session move", () => {
 	let root: string;
 	let agent: string;
 	let source: string;
@@ -32,7 +33,8 @@ describe.skipIf(process.platform !== "linux")("session move", () => {
 	let original: string;
 	beforeEach(() => {
 		vi.mocked(childProcess.execFileSync).mockReturnValue("");
-		root = mkdtempSync(join(tmpdir(), "pi-move-test-"));
+		// Move canonicalizes paths, so compare against the resolved temp root (macOS links /var to /private/var).
+		root = realpathSync(mkdtempSync(join(tmpdir(), "pi-move-test-")));
 		agent = join(root, "agent");
 		const from = join(root, "from");
 		target = join(root, "to");
@@ -147,7 +149,8 @@ describe.skipIf(process.platform !== "linux")("session move", () => {
 			fork.dispose();
 		}
 	});
-	it("refuses an untracked Pi process", () => {
+	// Detecting non-cooperating Pi processes relies on the Linux process table.
+	it.skipIf(process.platform !== "linux")("refuses an untracked Pi process", () => {
 		vi.mocked(childProcess.execFileSync).mockReturnValue("999999 pi pi\n");
 		expect(() => moveSessionHere(source, target, agent)).toThrow("does not report session ownership");
 		expect(readFileSync(source, "utf8")).toBe(original);

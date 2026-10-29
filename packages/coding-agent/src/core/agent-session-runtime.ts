@@ -372,9 +372,8 @@ export class AgentSessionRuntime {
 
 		const previousSessionFile = this.session.sessionFile;
 		if (!sourceAlreadyStored) {
-			const copy = () => copyFileSync(resolvedPath, destinationPath, constants.COPYFILE_EXCL);
-			if (process.platform === "linux") withSessionOwnershipGate(copy);
-			else copy();
+			// The gate keeps a concurrent relocation from moving the file being copied.
+			withSessionOwnershipGate(() => copyFileSync(resolvedPath, destinationPath, constants.COPYFILE_EXCL));
 		}
 
 		const sessionManager = SessionManager.open(destinationPath, sessionDir, cwdOverride);

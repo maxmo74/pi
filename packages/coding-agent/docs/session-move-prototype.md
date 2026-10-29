@@ -1,6 +1,6 @@
 # Session move prototype
 
-Experimental Linux-only implementation on `feat/session-move`. Do not use on valuable sessions yet.
+Experimental implementation on `feat/session-move`. Cooperative cross-platform ownership; see Limitations. Do not use on valuable sessions yet.
 
 ## Continue on another machine
 
@@ -12,7 +12,7 @@ npm run build
 node scripts/try-session-move.mjs
 ```
 
-Use Node.js 22.19 or newer. This branch is a prototype checkpoint, not an upstream-approved contribution. The ownership redesign discussed during development has not been implemented: macOS and native Windows relocation remain unsupported. Start with synthetic sessions, not your live profile.
+Use Node.js 22.19 or newer. This branch is a prototype checkpoint, not an upstream-approved contribution. macOS and Windows enforce ownership only among cooperating Pi instances: they cannot detect Pi processes that predate ownership. Start with synthetic sessions, not your live profile.
 
 The machine-local launchers, packaged installation, credentials, session files, and backups are not included in this repository. The scripts below can create a separate test profile; cloning the branch does not transfer your conversations or replace your installed Pi.
 
@@ -33,7 +33,7 @@ It launches the source checkout with a persistent private snapshot under `~/.loc
 - Invalid, partial, unreadable, or symlinked sessions are skipped and listed in the profile's `snapshot.json`.
 - Parent references between copied sessions are rebased to their copies. Transcript bodies are unchanged.
 - This isolates **session storage**, not project files. Resumed conversations still point at real working directories. Do not ask the agent to edit files unless intended.
-- The existing older-process refusal remains enabled: close the reported older Pi processes before testing a successful move. This launcher does not bypass ownership checks or complete the hardening work listed below.
+- On Linux the older-process refusal remains enabled: close the reported older Pi processes before testing a successful move. Elsewhere only cooperating instances are detected. This launcher does not bypass ownership checks or complete the hardening work listed below.
 
 ## Controlled live tests (disposable sessions only)
 
@@ -71,8 +71,8 @@ The launcher creates a temporary agent profile, two project directories, and syn
 1. The picker starts in the target directory. Ctrl+Y must do nothing for "Already here".
 2. Press Tab to show all directories, then select "Move this demo session".
 3. Ctrl+Y shows the source and destination. Escape cancels without changing files.
-4. Repeat and press Enter. While an older Pi instance is running, expect a refusal identifying its PID. This includes the Pi instance used to develop this patch.
-5. Close older Pi instances and repeat to test success. Do not launch an older instance during a move.
+4. Repeat and press Enter. On Linux, while another Pi instance is running, expect a refusal identifying its PID. This includes the Pi instance used to develop this patch.
+5. Close the other Pi instances and repeat to test success. Do not launch another instance during a move.
 6. After success, switch to current-directory scope: the moved session should now appear there. Resume it and inspect `/session`.
 
 Ctrl+Y is configurable as `app.session.move`. It overrides the search field's yank shortcut inside the picker. The destination is the process's starting directory, not a directory chosen interactively. Moving does not resume the session.
@@ -81,8 +81,8 @@ Ctrl+Y is configurable as `app.session.move`. It overrides the search field's ya
 
 - Confirmation before mutation; refuses the current session and same-directory moves.
 - SessionManager registers session ownership before loading a file. Multiple managers are reference-counted. Failed constructors and failed persisted runtime replacements release candidate ownership; an installed runtime keeps its manager if subsequent UI rebinding fails.
-- A per-user local gate serializes registration and moves, retrying contention for up to two seconds. Recursive acquisition fails immediately. Live PID records include Linux process start time, guarding against PID reuse.
-- Moves and picker deletion refuse a session held by any tracked manager, including another process. Recognized older Pi processes without tracking cause a conservative refusal. Deletion holds the gate across trash/unlink, and import holds it across copying.
+- A per-user local gate serializes registration and moves, retrying contention for up to two seconds. Recursive acquisition fails immediately. On Linux, PID records also carry the process start time, which distinguishes a PID from a later process that reused it.
+- Moves and picker deletion refuse a session held by any tracked manager, including another process. On Linux, recognized Pi processes without tracking also cause a conservative refusal. Deletion holds the gate across trash/unlink, and import holds it across copying.
 - Forking holds counted source and destination references during publication. Branch creation retains the source reference while the manager switches to the new file.
 - Only the header cwd changes; conversation bytes, IDs, timestamps and filename are preserved.
 - Backups are verified byte-for-byte and flushed before publication, with source/destination metadata retained under the agent profile's `session-move-backups/`, outside picker discovery.
@@ -91,8 +91,8 @@ Ctrl+Y is configurable as `app.session.move`. It overrides the search field's ya
 
 ## Limitations before upstream submission
 
-- Local Linux process tracking only. Shared filesystems accessed from other hosts, containers with separate process namespaces, and untracked SDK hosts are not supported. Process-name detection cannot prove the absence of arbitrary older/custom hosts.
-- A crashed process holding the short-lived gate leaves it blocked deliberately. Inspect the gate path in the error before recovery; automatic recovery and crash-journal handling still need design and tests.
+- Ownership is cooperative. A PID is treated as an active owner unless the OS confirms it is gone, so a suspended process keeps its sessions and a reused PID causes a conservative refusal rather than an unsafe move. Outside Linux, Pi processes that do not participate in ownership registration cannot be detected; the older-process scan remains Linux-only because a portable process table is not reliable enough. Shared filesystems accessed from other hosts and containers with separate process namespaces are not supported.
+- Linux only: a crashed process holding the short-lived gate leaves it blocked deliberately. Inspect the gate path in the error before recovery; automatic recovery and crash-journal handling still need design and tests.
 - Gate retries are synchronous and can pause the UI for up to two seconds; longer contention fails without stealing the gate. A move scans headers synchronously while holding it; large stores need performance testing.
 - Sessions with child `parentSession` references are refused rather than changing multiple files. Custom storage and symlinked storage need further work.
 - Temporary SDK managers must be disposed to release their registration. Existing temporary-manager call sites (for example rename) still need a lifecycle audit; conservative false-positive refusals are possible until the process exits.

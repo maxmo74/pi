@@ -9,10 +9,9 @@ export interface SessionDeleteResult {
 	error?: string;
 }
 
-/** Prefer trash, retaining the existing unlink fallback; on Linux, refuse active or untracked owners. */
+/** Prefer trash, retaining the existing unlink fallback; refuse active or untracked owners. */
 export function deleteSessionFile(sessionPath: string): SessionDeleteResult {
 	try {
-		if (process.platform !== "linux") return removeSessionFile(sessionPath);
 		return withSessionOwnershipGate(() => {
 			assertSessionUnused(sessionPath);
 			return removeSessionFile(sessionPath);

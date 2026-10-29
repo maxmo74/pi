@@ -10,7 +10,7 @@ interface GateEvent {
 	message?: string;
 }
 
-describe.skipIf(process.platform !== "linux")("session ownership gate", () => {
+describe("session ownership gate", () => {
 	let directory: string;
 	const children: ChildProcess[] = [];
 	beforeEach(() => {

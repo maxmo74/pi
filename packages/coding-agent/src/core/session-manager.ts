@@ -992,7 +992,7 @@ export class SessionManager {
 		return this.ownedSessionFile;
 	}
 	private set sessionFile(next: string | undefined) {
-		if (this.persist && process.platform === "linux") changeSessionOwnership(this.ownedSessionFile, next);
+		if (this.persist) changeSessionOwnership(this.ownedSessionFile, next);
 		this.ownedSessionFile = next;
 	}
 
