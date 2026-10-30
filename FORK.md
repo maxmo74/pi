@@ -13,7 +13,7 @@ Status means upstream intent, not effort: `never` would be rejected on sight, `u
 | Cluster | New files | Files it modifies in upstream | Status |
 | --- | --- | --- | --- |
 | Session move: `app.session.move`, `Ctrl+Y` in the picker | `src/core/session-move.ts`, `src/core/session-ownership.ts`, `src/core/session-delete.ts` | `src/core/keybindings.ts`, `src/core/session-manager.ts`, `src/core/agent-session-runtime.ts`, `src/modes/interactive/components/session-selector.ts`, `src/modes/interactive/interactive-mode.ts`, `src/core/export-html/index.ts`, `schemas/keybindings.schema.json` | rejected #11583 |
-| Release staging: build, rename, version, publish | `scripts/publish-patched.mjs` | none; writes `patch/update-info.json` on each publish | never |
+| Release staging: build, rename, version, publish | `scripts/publish-patched.mjs`, `patch/README.fork.md` | none; writes `patch/update-info.json` on each publish | never |
 | Update endpoint: `pi update` resolves from this fork's releases, and says so when pi.dev is ahead of the fork's base | none | `src/utils/version-check.ts`, `src/package-manager-cli.ts`, `src/modes/interactive/interactive-mode.ts` | never |
 | Standalone relocation script, predates the in-app feature | `scripts/pi-session-move.mjs`, `scripts/try-session-move.mjs`, `scripts/session-move-prototype.md` | none | ours |
 
@@ -27,6 +27,9 @@ New files never conflict at rebase. The modified columns are where rebases hurt:
 - Versions are `<upstream>-max.<revision>`, e.g. `1.4.0-max.2`. Prerelease suffix, not `+build`, because semver ignores build metadata and `pi update` would stop seeing upgrades.
 - `pi update` reads `https://github.com/maxmo74/pi/releases/latest/download/update-info.json`. A GitHub Release without that asset means no update path for anyone.
 - `node scripts/publish-patched.mjs` stages and dry-runs; `--publish` publishes and rewrites `patch/update-info.json`. It refuses a dirty `packages/` tree, because publishing from a branch that lags the release commit silently ships a mix of revisions.
+- The staged tree is build output only, so `README.md` and `LICENSE` are composed at staging time: `patch/README.fork.md` followed by the upstream package README, and the repo root `LICENSE` unmodified. npm ships both only from the packed directory, and the package directory has no LICENSE of its own.
+- **Publish and create the GitHub release in one sitting.** While the `update-info.json` asset is missing, `pi update` on an installed fork build fails with `Could not determine latest pi version.` rather than reporting nothing.
+- Accepted risk, not a bug: `update-info.json` names the npm package `pi update` installs, and it is served unsigned from release assets that anyone with write access to this repository can edit after publication. Publishing makes you the update authority for every install. Trusted Publishing and branch protection are the mitigations, and neither exists yet.
 
 ### Open actions
 

@@ -99,6 +99,18 @@ for (const entry of source.files) {
 	cpSync(from, join(staging, entry), { recursive: true });
 }
 
+// npm ships README.md and LICENSE from the packed directory only, and the package directory has no
+// LICENSE of its own. Compose both so the registry page says what this package is and carries the
+// upstream license notice, while the fork notice stays in one file that survives rebases.
+const forkNoticePath = join(repoRoot, "patch", "README.fork.md");
+if (!existsSync(forkNoticePath)) {
+	throw new Error("patch/README.fork.md is missing; the published README states what this fork is.");
+}
+const upstreamReadme = readFileSync(join(packageDir, "README.md"), "utf8");
+const forkNotice = readFileSync(forkNoticePath, "utf8");
+writeFileSync(join(staging, "README.md"), `${forkNotice.trimEnd()}\n\n${upstreamReadme.trimStart()}`);
+cpSync(join(repoRoot, "LICENSE"), join(staging, "LICENSE"));
+
 const published = {
 	...source,
 	name: publishedName,
