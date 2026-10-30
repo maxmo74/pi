@@ -1,8 +1,11 @@
 // Publish the patched coding-agent build to npm under this fork's scope.
 //
 // The repository keeps upstream package names so rebasing stays clean; the rename happens only in
-// a staging copy of the published files. Run without --publish to stage and dry-run, then with
-// --publish to send it to the registry.
+// a staging copy of the published files. Run without --publish to stage and dry-run.
+//
+// Pushing a v<tag> runs .github/workflows/publish.yml, which builds, publishes through npm's
+// trusted publishing and moves the update pointer, so --publish here is for the one publish that
+// creates the package and for recovery when CI cannot run.
 import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -139,5 +142,6 @@ execFileSync("npm", ["publish", "--access", "public"], { cwd: staging, stdio: "i
 const note = existsSync(infoPath) ? JSON.parse(readFileSync(infoPath, "utf8")).note || defaultNote : defaultNote;
 writeFileSync(infoPath, `${JSON.stringify({ version, packageName: publishedName, note }, null, "	")}\n`);
 console.log(`\nPublished ${publishedName}@${version}.`);
-console.log(`An install cannot update until this file reaches the update-info branch; FORK.md,`);
-console.log(`"Publishing an update" lists the git plumbing that pushes it without touching this tree.`);
+console.log(`Installs cannot update until this file reaches the update-info branch. A CI publish`);
+console.log(`moves it in the same run; after publishing from here, push it with the git plumbing in`);
+console.log(`FORK.md, "Publishing an update".`);

@@ -13,7 +13,7 @@ Status means upstream intent, not effort: `never` would be rejected on sight, `u
 | Cluster | New files | Files it modifies in upstream | Status |
 | --- | --- | --- | --- |
 | Session move: `app.session.move`, `Ctrl+Y` in the picker | `src/core/session-move.ts`, `src/core/session-ownership.ts`, `src/core/session-delete.ts` | `src/core/keybindings.ts`, `src/core/session-manager.ts`, `src/core/agent-session-runtime.ts`, `src/modes/interactive/components/session-selector.ts`, `src/modes/interactive/interactive-mode.ts`, `src/core/export-html/index.ts`, `schemas/keybindings.schema.json` | rejected #11583 |
-| Release staging: build, rename, version, publish | `scripts/publish-patched.mjs`, `patch/README.fork.md` | none; writes `patch/update-info.json` on each publish | never |
+| Release staging: build, rename, version, publish | `scripts/publish-patched.mjs`, `patch/README.fork.md`, `.github/workflows/publish.yml` | none; writes `patch/update-info.json` on each publish | never |
 | Update endpoint: `pi update` resolves from this fork's releases, and says so when pi.dev is ahead of the fork's base | none | `src/utils/version-check.ts`, `src/package-manager-cli.ts`, `src/modes/interactive/interactive-mode.ts` | never |
 | Standalone relocation script, predates the in-app feature | `scripts/pi-session-move.mjs`, `scripts/try-session-move.mjs`, `scripts/session-move-prototype.md` | none | ours |
 
@@ -25,16 +25,18 @@ New files never conflict at rebase. The modified columns are where rebases hurt:
 
 - npm package `@maxmo74/pi-coding-agent`. One package: the published bundle inlines every workspace package.
 - Versions are `<upstream>-max.<revision>`, e.g. `1.4.0-max.2`. Prerelease suffix, not `+build`, because semver ignores build metadata and `pi update` would stop seeing upgrades.
-- `pi update` reads `https://raw.githubusercontent.com/maxmo74/pi/update-info/patch/update-info.json`: `patch/update-info.json` on a single-file branch, pushed with the deploy key. No GitHub Release is used, because deploy keys cannot create releases and raw hosting means publishing needs no API credential at all.
+- `pi update` reads `https://raw.githubusercontent.com/maxmo74/pi/update-info/patch/update-info.json`: `patch/update-info.json` on a single-file branch. It is hosted on a branch rather than as a release asset because a deploy key cannot create releases, and raw hosting means the pointer needs no API credential beyond the one the publishing workflow already holds.
 - `node scripts/publish-patched.mjs` stages and dry-runs; `--publish` publishes and rewrites `patch/update-info.json`. It refuses a dirty `packages/` tree, because publishing from a branch that lags the release commit silently ships a mix of revisions.
 - The staged tree is build output only, so `README.md` and `LICENSE` are composed at staging time: `patch/README.fork.md` followed by the upstream package README, and the repo root `LICENSE` unmodified. npm ships both only from the packed directory, and the package directory has no LICENSE of its own.
-- **Publish and push the update pointer in the same run.** While the file is missing or stale, `pi update` on an installed fork build fails with `Could not determine latest pi version.` rather than reporting nothing.
-- Accepted risk, not a bug: that file names the npm package `pi update` installs, is served unsigned, and anyone who can push to this repository can change what everyone's installs run. Publishing makes you the update authority for every install. Branch protection is the mitigation; Trusted Publishing only covers npm itself.
+- **Publishing and moving the pointer are one run.** While the file is missing or stale, `pi update` on an installed fork build fails with `Could not determine latest pi version.` rather than reporting nothing, so `.github/workflows/publish.yml` does both: it publishes over npm's trusted publishing (OIDC, no stored npm credential, provenance for free) and then commits that file to `update-info` with the run's own `GITHUB_TOKEN`.
+- Accepted risk, not a bug: that file names the npm package `pi update` installs, is served unsigned, and anyone who can push to this repository can change what everyone's installs run. Publishing makes you the update authority for every install. Branch protection on `update-info` is the mitigation; trusted publishing only covers npm itself, and `GITHUB_TOKEN` pushes bypass branch protection unless "restrict pushes" is on and the workflow's actor is allowed.
 
 ### Open actions
 
-- Rotate the npm access token that was written to `~/.npmrc` and exposed in a session transcript.
-- Replace it with GitHub Actions Trusted Publishing (OIDC), which needs the package to exist first.
+- Bootstrap: npm has no way to register a trusted publisher for a package that does not exist yet, so the first `1.4.0-max.0` has to be published by hand (`npm publish --otp`, with an authenticator app added to the account, since a passkey cannot answer the CLI's OTP prompt).
+- Then register the publisher on npmjs.com -> package -> Settings -> Trusted publishing (user `maxmo74`, repository `pi`, workflow `publish.yml`) and let a CI publish bind it within 2 days, otherwise the config expires. A second revision of the same code is a valid binding publish.
+- Revoke the npm access token written to `~/.npmrc` and exposed in a session transcript, then set the package to "Require two-factor authentication and disallow tokens", which leaves only OIDC publishes.
+- Protect the `update-info` branch with restrict-pushes so the workflow's `GITHUB_TOKEN` push is the only writer.
 
 ## Upstream bugs we carry unsubmitted
 
@@ -59,7 +61,23 @@ Filed nowhere. Not our code, and filing them is a contribution to them, not prog
 
 ## Publishing an update
 
-One run, in this order, from a commit that contains the upstream release commit:
+Rebase onto the upstream release commit first. Never publish from a branch that lags the release it names.
+
+The normal path is one tag push on the fork line:
+
+```
+git tag v1.4.0-max.0 && git push origin v1.4.0-max.0
+```
+
+`.github/workflows/publish.yml` builds, runs `npm run check` and the coding-agent suite, stages, publishes
+through npm's trusted publishing, commits `patch/update-info.json` to the `update-info` branch with the run's
+own `GITHUB_TOKEN`, and polls raw.githubusercontent.com until the new pointer is served. A tag names the exact
+version to publish, `v<upstream>-max.<revision>` with the upstream part matching `packages/coding-agent/package.json`,
+so pushing the same tag twice fails on a duplicate version instead of publishing something else. `workflow_dispatch`
+with a revision input exists for the run that binds a freshly registered publisher config.
+
+Publishing from the laptop is the bootstrap (npm cannot register a publisher for a package that does not exist yet)
+and the recovery path when CI cannot run. It needs an OTP, and it does not move the pointer, so finish it by hand:
 
 ```
 npm run build && npm run check
@@ -76,8 +94,8 @@ blob=$(git hash-object -w patch/update-info.json)
 GIT_INDEX_FILE=/tmp/update-info.idx git update-index --add --cacheinfo 100644,"$blob",patch/update-info.json
 tree=$(GIT_INDEX_FILE=/tmp/update-info.idx git write-tree)
 parent=$(git rev-parse -q --verify refs/remotes/origin/update-info) || parent=
-if [ -n "$parent" ]; then commit=$(git commit-tree "$tree" -p "$parent" -m "release: <version>");
-else commit=$(git commit-tree "$tree" -m "release: <version>"); fi
+if [ -n "$parent" ]; then commit=$(git commit-tree "$tree" -p "$parent" -m "update pi update pointer to <version>");
+else commit=$(git commit-tree "$tree" -m "add pi update pointer for <version>"); fi
 git push origin "$commit:refs/heads/update-info"
 git fetch origin update-info:refs/remotes/origin/update-info
 ```

@@ -1,0 +1,157 @@
+# Publishes a patched build to npm as @maxmo74/pi-coding-agent and moves the pointer that
+# `pi update` reads, in one run, so no install can ever see a version that has no pointer.
+#
+# No npm credential is stored in this repository. Publishing authenticates with GitHub's OIDC token
+# through npm's trusted publishing, which also generates provenance for the published version.
+# Register this workflow on npmjs.com under the package's Settings -> Trusted publishing with:
+# user maxmo74, repository pi, workflow filename publish.yml, tag pattern empty, "npm publish" allowed.
+#
+# A tag push is the only trigger that matters day to day. Upstream CI runs on main and on PRs, not on
+# the fork's patch line, so the checks here are the gate between a rebase and a release.
+
+name: Publish patched build
+
+on:
+  push:
+    tags:
+      - "v*"
+  # A trusted publisher is bound to the workflow file that publishes, and an unbound config expires
+  # after 2 days, so a manual run of this file is how that binding publish gets made.
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: Publish <version in package.json>-max.<revision>
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # Two publishes at once would race on the next free revision and on the pointer branch.
+    concurrency:
+      group: publish-patched
+      cancel-in-progress: false
+    permissions:
+      # Write rather than read: the pointer push below reuses the credential actions/checkout stores.
+      contents: write
+      id-token: write # OIDC token for npm trusted publishing
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Resolve the version
+        id: version
+        env:
+          # A tag names the exact version to publish, so pushing the same tag twice cannot publish a
+          # different version than it names; npm rejects the duplicate instead.
+          TAG: ${{ github.ref_name }}
+          REVISION: ${{ inputs.revision }}
+        run: |
+          set -euo pipefail
+          upstream=$(node -p "require('./packages/coding-agent/package.json').version")
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            version="${TAG#v}"
+            if [[ "$version" == "$upstream" || "${version%-max.*}" != "$upstream" ]]; then
+              echo "::error::Tag $TAG does not name this commit: expected v$upstream-max.<revision>"
+              exit 1
+            fi
+            revision="${version##*-max.}"
+          else
+            revision="$REVISION"
+            version="$upstream-max.$revision"
+          fi
+          if [[ ! "$revision" =~ ^[0-9]+$ ]]; then
+            echo "::error::Revision must be a non-negative integer, got '$revision'"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+          echo "Publishing $version"
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      # fd and ripgrep are used by coding-agent tools tests.
+      - name: Install system dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fd-find ripgrep
+          sudo ln -s "$(which fdfind)" /usr/local/bin/fd
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build
+        run: npm run build
+
+      # Trusted publishing needs npm 11.5.1 or newer and the Node 22 line bundles npm 10.x; this is
+      # the version upstream's own npm publish job upgrades to.
+      - name: Upgrade npm for trusted publishing
+        run: |
+          set -euo pipefail
+          npm install -g npm@11.16.0 --ignore-scripts
+          npm --version
+
+      # The full suite is upstream CI's job and needs a Rust toolchain for packages/env. These two
+      # steps cover what a patched build can break: types, lint, entry graphs, the install lock, and
+      # the package whose tree is published.
+      - name: Check
+        run: npm run check
+
+      - name: Test the package being published
+        run: npm test --workspace @earendil-works/pi-coding-agent
+
+      - name: Stage and publish
+        run: node scripts/publish-patched.mjs --publish --revision "${{ steps.version.outputs.revision }}"
+
+      # The pointer is one file on the update-info branch, which `pi update` reads through
+      # raw.githubusercontent.com. Commit it with git plumbing so the branch carries that file alone
+      # instead of the whole tree, and push normally so the push fails if the branch moved.
+      - name: Point pi update at the new version
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          GIT_AUTHOR_NAME: ${{ github.actor }}
+          GIT_AUTHOR_EMAIL: ${{ github.actor }}@users.noreply.github.com
+          GIT_COMMITTER_NAME: ${{ github.actor }}
+          GIT_COMMITTER_EMAIL: ${{ github.actor }}@users.noreply.github.com
+        run: |
+          set -euo pipefail
+          blob=$(git hash-object -w patch/update-info.json)
+          export GIT_INDEX_FILE="$RUNNER_TEMP/update-info.index"
+          git update-index --add --cacheinfo "100644,$blob,patch/update-info.json"
+          tree=$(git write-tree)
+          unset GIT_INDEX_FILE
+          git fetch --no-tags origin +refs/heads/update-info:refs/remotes/origin/update-info || true
+          parent=$(git rev-parse -q --verify refs/remotes/origin/update-info || true)
+          if [[ -n "$parent" ]]; then
+            commit=$(git commit-tree "$tree" -p "$parent" -m "update pi update pointer to $VERSION")
+          else
+            commit=$(git commit-tree "$tree" -m "add pi update pointer for $VERSION")
+          fi
+          git push origin "$commit:refs/heads/update-info"
+
+      # raw.githubusercontent.com caches for a few minutes, so poll rather than let an install read
+      # the stale pointer right after a publish that already announced the new version.
+      - name: Verify the pointer
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          url=https://raw.githubusercontent.com/$GITHUB_REPOSITORY/update-info/patch/update-info.json
+          body=
+          for attempt in 1 2 3 4 5 6; do
+            body=$(curl -sf "$url" || true)
+            if grep -q "\"version\": \"$VERSION\"" <<< "$body"; then
+              printf '%s\n' "$body"
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "::error::$url is not serving $VERSION yet:"
+          printf '%s\n' "$body"
+          exit 1
