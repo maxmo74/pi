@@ -5844,7 +5844,13 @@ export class InteractiveMode {
 						const next = (nextName ?? "").trim();
 						if (!next) return;
 						const mgr = SessionManager.open(sessionFilePath);
-						mgr.appendSessionInfo(next);
+						try {
+							mgr.appendSessionInfo(next);
+						} finally {
+							// The picker keeps its own reference; releasing here stops the rename from
+							// keeping the session owned for the rest of the process.
+							mgr.dispose();
+						}
 					},
 					showRenameHint: true,
 					keybindings: this.keybindings,

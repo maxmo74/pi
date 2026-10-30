@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
@@ -13,7 +13,8 @@ let destination;
 let parent;
 let body;
 beforeEach(() => {
-	root = mkdtempSync(join(tmpdir(), "pi-snapshot-test-"));
+	// The snapshot reports resolved paths, and macOS links the temp dir to /private/var.
+	root = realpathSync(mkdtempSync(join(tmpdir(), "pi-snapshot-test-")));
 	source = join(root, "original");
 	destination = join(root, "snapshots");
 	mkdirSync(join(source, "sessions", "--project--"), { recursive: true });

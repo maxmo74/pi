@@ -64,6 +64,29 @@ describe("session picker move", () => {
 		expect(picker.render(140).join("\n")).not.toContain("Move session from");
 		expect(move).not.toHaveBeenCalled();
 	});
+	it("yanks into the search field when no move is available", async () => {
+		const move = vi.fn(() => "");
+		const picker = new SessionSelectorComponent(
+			async () => [session("/target")],
+			async () => [],
+			() => {},
+			() => {},
+			() => {},
+			() => {},
+			{ moveTarget: "/target", moveSession: move },
+		);
+		await flush();
+		for (const character of "hello") picker.handleInput(character);
+		// Ctrl+W kills the word into the kill ring; Ctrl+Y must yank it back instead of being swallowed.
+		picker.handleInput("\x17");
+		picker.handleInput("\x19");
+		const rendered = picker.render(140).join("\n");
+		// The search field is the line starting with "> "; list rows start with "› ", so this match proves
+		// reached the input rather than being swallowed by the move binding.
+		expect(rendered).toMatch(/> hello/);
+		expect(rendered).not.toContain("Move session from");
+		expect(move).not.toHaveBeenCalled();
+	});
 	it("refuses the current session even when it belongs elsewhere", async () => {
 		const picker = new SessionSelectorComponent(
 			async () => [session("/elsewhere")],

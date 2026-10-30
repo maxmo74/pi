@@ -75,7 +75,7 @@ The launcher creates a temporary agent profile, two project directories, and syn
 5. Close the other Pi instances and repeat to test success. Do not launch another instance during a move.
 6. After success, switch to current-directory scope: the moved session should now appear there. Resume it and inspect `/session`.
 
-Ctrl+Y is configurable as `app.session.move`. It overrides the search field's yank shortcut inside the picker. The destination is the process's starting directory, not a directory chosen interactively. Moving does not resume the session.
+Ctrl+Y is configurable as `app.session.move`. It is claimed only when the highlighted session can actually move; otherwise the key reaches the search field, so `tui.editor.yank` still works there. The destination is the process's starting directory, not a directory chosen interactively. Moving does not resume the session.
 
 ## Safety implemented
 

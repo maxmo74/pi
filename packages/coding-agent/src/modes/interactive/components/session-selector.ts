@@ -599,7 +599,12 @@ class SessionList implements Component, Focusable {
 			if (this.canMoveSelected()) {
 				this.confirmingMove = this.filteredSessions[this.selectedIndex]!.session;
 				this.onMoveConfirmationChange?.(this.confirmingMove);
+				return;
 			}
+			// Nothing to move here, so keep the editor binding usable in the search field.
+			// Same convention as app.session.deleteNoninvasive, which defers to the input.
+			this.searchInput.handleInput(keyData);
+			this.filterSessions(this.searchInput.getValue());
 			return;
 		}
 

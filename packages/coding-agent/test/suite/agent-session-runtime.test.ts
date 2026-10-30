@@ -191,6 +191,7 @@ describe("AgentSessionRuntime characterization", () => {
 
 		faux.setResponses([fauxAssistantMessage(fauxToolCall("block", {}), { stopReason: "toolUse" })]);
 		const outgoingSession = runtime.session;
+		const outgoingSessionFile = outgoingSession.sessionFile!;
 		const promptPromise = outgoingSession.prompt("start blocking tool");
 		await toolStartedPromise;
 
@@ -201,7 +202,9 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(runtime.session.sessionFile).toBe(firstSessionFile);
 		// The outgoing session settled before replacement: the interrupted tool
 		// call has a persisted tool result instead of dangling forever.
-		const outgoingEntries = SessionManager.open(outgoingSession.sessionFile!)
+		// Its ownership is released during replacement, so the file name captured while the
+		// session was still current identifies it.
+		const outgoingEntries = SessionManager.open(outgoingSessionFile)
 			.getEntries()
 			.filter((entry) => entry.type === "message");
 		expect(outgoingEntries.map((entry) => entry.message.role)).toEqual([
