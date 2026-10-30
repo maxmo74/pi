@@ -40,8 +40,9 @@ New files never conflict at rebase. The modified columns are where rebases hurt:
 
 Filed nowhere. Not our code, and filing them is a contribution to them, not progress for us.
 
-- `packages/tui/src/terminal-image.ts`, `shortenImagePath()` compares a raw `homedir()` prefix against a caller-supplied path. A normalised path (collapsed `//`, or macOS `/var` resolved to `/private/var`) misses the prefix and shows unshortened: `join(homedir(), ".pi", "agent", "shot.png")` under such a `HOME` prints the absolute path instead of `~/...`. Cosmetic. Fix is to normalise both sides.
-- `packages/coding-agent/package.json` lists `containerization.md` in `files`; the file lives at `docs/containerization.md` and nothing copies it, so `npm pack` has never included it.
+- `packages/tui/src/terminal-image.ts`, `shortenImagePath()` compares a raw `homedir()` prefix against a caller-supplied path. A normalised path (collapsed `//`, or macOS `/var` resolved to `/private/var`) misses the prefix and shows unshortened: `join(homedir(), ".pi", "agent", "shot.png")` under such a `HOME` prints the absolute path instead of `~/...`. Cosmetic, and only reachable with a non-normalised `HOME`, so ordinary installs never hit it.
+  **Decided: do not patch it in this fork.** The fix is `path.resolve` on both sides inside `shortenImagePath()`, with cases to extend in `packages/tui/test/terminal-image.test.ts`, but carrying it means a permanent diff in a package we otherwise never modify. Revisit if upstream edits that file or someone actually reports it.
+- `packages/coding-agent/package.json` lists `containerization.md` in `files`; the file lives at `docs/containerization.md` and nothing copies it, so `npm pack` has never included it. Informational for us: staging packs the whole `docs/` directory, so our artifact contains the doc either way.
 
 ## Rebase notes
 
