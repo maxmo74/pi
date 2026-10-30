@@ -25,6 +25,8 @@ New files never conflict at rebase. The modified columns are where rebases hurt:
 
 - npm package `@maxmo74/pi-coding-agent`. One package: the published bundle inlines every workspace package.
 - Versions are `<upstream>-max.<revision>`, e.g. `1.4.0-max.2`. Prerelease suffix, not `+build`, because semver ignores build metadata and `pi update` would stop seeing upgrades.
+- Published with `--tag latest`. npm refuses a prerelease without an explicit tag, and since this package never holds a non-prerelease, `latest` is the newest fork build so `npm i @maxmo74/pi-coding-agent` resolves. `pi update` ignores dist-tags: it installs `packageName@version` from the pointer.
+- The first publish of the name left a `0.0.0-stage` version behind, created by npm in the same second as the package itself. That is npm's staged-publishing placeholder, it is the lowest version in the package, and `latest` does not point at it. npm also holds a brand-new package invisible for a few minutes after it prints `+ published`.
 - `pi update` reads `https://raw.githubusercontent.com/maxmo74/pi/update-info/patch/update-info.json`: `patch/update-info.json` on a single-file branch. It is hosted on a branch rather than as a release asset because a deploy key cannot create releases, and raw hosting means the pointer needs no API credential beyond the one the publishing workflow already holds.
 - `node scripts/publish-patched.mjs` stages and dry-runs; `--publish` publishes and rewrites `patch/update-info.json`. It refuses a dirty `packages/` tree, because publishing from a branch that lags the release commit silently ships a mix of revisions.
 - The staged tree is build output only, so `README.md` and `LICENSE` are composed at staging time: `patch/README.fork.md` followed by the upstream package README, and the repo root `LICENSE` unmodified. npm ships both only from the packed directory, and the package directory has no LICENSE of its own.
@@ -33,10 +35,10 @@ New files never conflict at rebase. The modified columns are where rebases hurt:
 
 ### Open actions
 
-- Bootstrap: npm has no way to register a trusted publisher for a package that does not exist yet, so the first `1.4.0-max.0` has to be published by hand (`npm publish --otp`, with an authenticator app added to the account, since a passkey cannot answer the CLI's OTP prompt).
-- Then register the publisher on npmjs.com -> package -> Settings -> Trusted publishing (user `maxmo74`, repository `pi`, workflow `publish.yml`) and let a CI publish bind it within 2 days, otherwise the config expires. A second revision of the same code is a valid binding publish.
-- Revoke the npm access token written to `~/.npmrc` and exposed in a session transcript, then set the package to "Require two-factor authentication and disallow tokens", which leaves only OIDC publishes.
-- Protect the `update-info` branch with restrict-pushes so the workflow's `GITHUB_TOKEN` push is the only writer.
+- Register the trusted publisher on npmjs.com -> `@maxmo74/pi-coding-agent` -> Settings -> Trusted publishing: user `maxmo74`, repository `pi`, workflow `publish.yml`, tag pattern empty, allow `npm publish`. npm cannot register one for a package that does not exist, which is why `1.4.0-max.0` went out by hand on 2026-10-30.
+- Then dispatch `publish.yml` with `revision=1` within 2 days, before the new config expires, and check the version shows provenance.
+- Revoke the two npm tokens that reached this session's transcript: the login token in `~/.npmrc` and the short-lived bypass token used for the bootstrap publish. Then set the package to "Require two-factor authentication and disallow tokens", which leaves OIDC as the only way to publish.
+- Protect the `update-info` branch with restrict-pushes so the workflow's `GITHUB_TOKEN` push is the only writer. Do it after one successful CI push, because restrict-pushes blocks that push too unless the workflow's actor is allowed.
 
 ## Upstream bugs we carry unsubmitted
 
@@ -77,13 +79,18 @@ so pushing the same tag twice fails on a duplicate version instead of publishing
 with a revision input exists for the run that binds a freshly registered publisher config.
 
 Publishing from the laptop is the bootstrap (npm cannot register a publisher for a package that does not exist yet)
-and the recovery path when CI cannot run. It needs an OTP, and it does not move the pointer, so finish it by hand:
+and the recovery path when CI cannot run. It needs a credential npm accepts from the CLI -- an OTP, or a granular
+token with Bypass 2FA, since a passkey cannot answer the CLI's prompt -- and it does not move the pointer, so finish
+it by hand:
 
 ```
 npm run build && npm run check
 node scripts/publish-patched.mjs            # stage and dry-run, check the manifest
-node scripts/publish-patched.mjs --publish  # publishes and rewrites patch/update-info.json
+NPM_CONFIG_USERCONFIG=/tmp/publish-npmrc node scripts/publish-patched.mjs --publish
 ```
+
+`NPM_CONFIG_USERCONFIG` points npm at a throwaway file holding the publish token, so a publish never
+depends on the token in `~/.npmrc` and no credential is written inside the repository.
 
 Then push that file to the `update-info` branch without disturbing the working tree. It builds a commit
 from a temporary index, so nothing is staged or checked out, and it fast-forwards the branch instead
@@ -91,6 +98,7 @@ of force-pushing:
 
 ```
 blob=$(git hash-object -w patch/update-info.json)
+rm -f /tmp/update-info.idx
 GIT_INDEX_FILE=/tmp/update-info.idx git update-index --add --cacheinfo 100644,"$blob",patch/update-info.json
 tree=$(GIT_INDEX_FILE=/tmp/update-info.idx git write-tree)
 parent=$(git rev-parse -q --verify refs/remotes/origin/update-info) || parent=
