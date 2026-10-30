@@ -109,6 +109,24 @@ jobs:
       - name: Stage and publish
         run: node scripts/publish-patched.mjs --publish --revision "${{ steps.version.outputs.revision }}"
 
+      # npm holds a freshly published version invisible for minutes after it prints `+ published`,
+      # four minutes in practice for this package. Moving the pointer across that gap would leave
+      # `pi update` installing a version the registry has not served yet, which fails with ETARGET.
+      - name: Wait for npm to serve the version
+        run: |
+          set -euo pipefail
+          packageName=$(node -p "require('./patch/update-info.json').packageName")
+          version=$(node -p "require('./patch/update-info.json').version")
+          for attempt in $(seq 1 40); do
+            if npm view "$packageName@$version" version >/dev/null 2>&1; then
+              echo "$packageName@$version resolves"
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "::error::$packageName@$version still does not resolve after 13 minutes; the pointer stays where it is"
+          exit 1
+
       # The pointer is one file on the update-info branch, which `pi update` reads through
       # raw.githubusercontent.com. Commit it with git plumbing so the branch carries that file alone
       # instead of the whole tree, and push normally so the push fails if the branch moved.
