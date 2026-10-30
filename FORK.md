@@ -42,7 +42,7 @@ Filed nowhere. Not our code, and filing them is a contribution to them, not prog
 
 - `packages/tui/src/terminal-image.ts`, `shortenImagePath()` compares a raw `homedir()` prefix against a caller-supplied path. A normalised path (collapsed `//`, or macOS `/var` resolved to `/private/var`) misses the prefix and shows unshortened: `join(homedir(), ".pi", "agent", "shot.png")` under such a `HOME` prints the absolute path instead of `~/...`. Cosmetic, and only reachable with a non-normalised `HOME`, so ordinary installs never hit it.
   **Decided: do not patch it in this fork.** The fix is `path.resolve` on both sides inside `shortenImagePath()`, with cases to extend in `packages/tui/test/terminal-image.test.ts`, but carrying it means a permanent diff in a package we otherwise never modify. Revisit if upstream edits that file or someone actually reports it.
-- `packages/coding-agent/package.json` lists `containerization.md` in `files`; the file lives at `docs/containerization.md` and nothing copies it, so `npm pack` has never included it. Informational for us: staging packs the whole `docs/` directory, so our artifact contains the doc either way.
+- `packages/coding-agent/package.json` lists `containerization.md` in `files`, but the file lives at `docs/containerization.md` and always has (added there in `86314bf38`, #5356). **Not a defect, and nothing to report.** npm ignores missing `files` entries, the doc ships via the `docs` entry in both the official and our tarball, and every link to it is `docs`-relative. Dead metadata from the day it was written; the only cost is a reader wondering why the manifest lies.
 
 ## Rebase notes
 
