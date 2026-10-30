@@ -78,6 +78,11 @@ if (!Number.isInteger(revision) || revision < 0) throw new Error(`Invalid revisi
 // never compares as newer than "1.4.0+max.0" and `pi update` would stop offering upgrades.
 const version = `${upstreamVersion}-max.${revision}`;
 
+// npm refuses to publish a prerelease without an explicit tag, and this package never holds a
+// non-prerelease version, so `latest` names the newest fork build and `npm i ${publishedName}`
+// installs it. `pi update` is unaffected: it installs packageName@version from the pointer.
+const publishTag = "latest";
+
 // The published bundle inlines every workspace package, so a publish must name its source exactly.
 const dirty = git(["status", "--porcelain", "--", "packages"]);
 if (dirty) throw new Error("Commit or stash changes under packages/ before publishing.");
@@ -130,12 +135,12 @@ console.log(`Staged ${publishedName}@${version} in ${staging}`);
 console.log(`Registry versions: ${registry.length ? registry.join(", ") : "none"}`);
 
 if (!options.publish) {
-	execFileSync("npm", ["publish", "--dry-run"], { cwd: staging, stdio: "inherit" });
+	execFileSync("npm", ["publish", "--dry-run", "--tag", publishTag], { cwd: staging, stdio: "inherit" });
 	console.log(`\nNext: node scripts/publish-patched.mjs --revision ${revision} --publish`);
 	process.exit(0);
 }
 
-execFileSync("npm", ["publish", "--access", "public"], { cwd: staging, stdio: "inherit" });
+execFileSync("npm", ["publish", "--access", "public", "--tag", publishTag], { cwd: staging, stdio: "inherit" });
 
 // `pi update` reads this file from the raw-hosted update-info branch, so it names the version just
 // published.
