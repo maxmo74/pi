@@ -10,6 +10,7 @@ import {
 	getLatestPiRelease,
 	getLatestPiVersion,
 	isNewerPackageVersion,
+	upstreamVersionAhead,
 } from "../src/utils/version-check.ts";
 import { allowNetwork } from "./test-network-env.ts";
 
@@ -187,6 +188,25 @@ describe("fork update status", () => {
 		);
 
 		await expect(getForkUpdateStatus("1.4.0-max.0")).resolves.toEqual({ kind: "current" });
+	});
+
+	// A rejected request must not escape: this runs unhandled at startup and inside `pi update`.
+	it("swallows a failing endpoint instead of rejecting", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => {
+				throw new Error("fetch failed");
+			}),
+		);
+
+		await expect(getForkUpdateStatus("1.4.0-max.0")).resolves.toEqual({ kind: "current" });
+	});
+
+	it("only reports upstream ahead when upstream passes the fork's base version", () => {
+		expect(upstreamVersionAhead("1.4.0-max.3", { version: "1.4.0" })).toBeUndefined();
+		expect(upstreamVersionAhead("1.4.0-max.3", { version: "1.4.1" })).toBe("1.4.1");
+		expect(upstreamVersionAhead("1.4.0-max.3", { version: "1.3.9" })).toBeUndefined();
+		expect(upstreamVersionAhead("1.4.0-max.3", undefined)).toBeUndefined();
 	});
 
 	it("asks both endpoints exactly once", async () => {

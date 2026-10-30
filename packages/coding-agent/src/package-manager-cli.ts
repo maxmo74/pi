@@ -42,9 +42,10 @@ import {
 	formatUpstreamAheadNotice,
 	formatUpstreamAheadTitle,
 	formatVersionCheckError,
-	getForkUpdateStatus,
 	getLatestPiRelease,
+	getUpstreamPiRelease,
 	isNewerPackageVersion,
+	upstreamVersionAhead,
 } from "./utils/version-check.ts";
 import {
 	cleanupWindowsSelfUpdateQuarantine,
@@ -717,10 +718,12 @@ async function getSelfUpdatePlan(force: boolean): Promise<SelfUpdatePlan> {
 
 	console.log(chalk.green(`${APP_NAME} is already up to date (v${VERSION})`));
 	// The fork endpoint only ever offers patched builds, so explain when pi.dev has moved further.
-	const forkStatus = await getForkUpdateStatus(VERSION);
-	if (forkStatus.kind === "upstream-ahead") {
-		console.log(chalk.yellow(formatUpstreamAheadTitle(forkStatus.upstreamVersion)));
-		console.log(chalk.dim(formatUpstreamAheadNotice(VERSION, forkStatus.upstreamVersion)));
+	// One extra request, and only on this path: the fork release is already in hand above.
+	const upstreamRelease = await getUpstreamPiRelease(VERSION).catch(() => undefined);
+	const upstreamVersion = upstreamVersionAhead(VERSION, upstreamRelease);
+	if (upstreamVersion) {
+		console.log(chalk.yellow(formatUpstreamAheadTitle(upstreamVersion)));
+		console.log(chalk.dim(formatUpstreamAheadNotice(VERSION, upstreamVersion)));
 	}
 	return { packageName, installSpec, version: latestRelease.version, shouldRun: false };
 }

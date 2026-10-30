@@ -126,7 +126,7 @@ export async function getLatestPiRelease(
 }
 
 /** Latest release published by pi.dev itself, which this fork may not have rebuilt yet. */
-async function getUpstreamPiRelease(
+export async function getUpstreamPiRelease(
 	currentVersion: string,
 	options: { timeoutMs?: number; retry?: boolean } = {},
 ): Promise<LatestPiRelease | undefined> {
@@ -134,25 +134,42 @@ async function getUpstreamPiRelease(
 }
 
 /**
+ * The upstream version this build is missing, if any: newer than the upstream release the build was
+ * cut from. Comparing against the base version keeps this fork's own `-max` revisions from reading
+ * as ahead of upstream.
+ */
+export function upstreamVersionAhead(
+	currentVersion: string,
+	upstreamRelease: LatestPiRelease | undefined,
+): string | undefined {
+	if (!upstreamRelease) return undefined;
+	const comparison = comparePackageVersions(upstreamRelease.version, forkBaseVersion(currentVersion));
+	return (comparison ?? 0) > 0 ? upstreamRelease.version : undefined;
+}
+
+/**
  * Report what a fork build should say about updates. A patched release always wins; otherwise a
- * newer upstream release means the fork still owes a rebuild. Unreachable endpoints report "current"
- * so a version check never nags because of the network.
+ * newer upstream release means the fork still owes a rebuild. Any unusable answer reports "current"
+ * so a version check never nags, and never throws, because of the network.
  */
 export async function getForkUpdateStatus(
 	currentVersion: string,
 	options: { timeoutMs?: number; retry?: boolean } = {},
 ): Promise<ForkUpdateStatus> {
-	if (process.env.PI_SKIP_VERSION_CHECK) return { kind: "current" };
-	const [patched, upstream] = await Promise.all([
-		getLatestPiRelease(currentVersion, options),
-		getUpstreamPiRelease(currentVersion, options),
-	]);
-	if (patched && isNewerPackageVersion(patched.version, currentVersion))
-		return { kind: "patched-update", release: patched };
-	if (upstream && (comparePackageVersions(upstream.version, forkBaseVersion(currentVersion)) ?? 0) > 0) {
-		return { kind: "upstream-ahead", upstreamVersion: upstream.version };
+	try {
+		if (process.env.PI_SKIP_VERSION_CHECK) return { kind: "current" };
+		const [patched, upstream] = await Promise.all([
+			getLatestPiRelease(currentVersion, options),
+			getUpstreamPiRelease(currentVersion, options),
+		]);
+		if (patched && isNewerPackageVersion(patched.version, currentVersion)) {
+			return { kind: "patched-update", release: patched };
+		}
+		const upstreamVersion = upstreamVersionAhead(currentVersion, upstream);
+		return upstreamVersion ? { kind: "upstream-ahead", upstreamVersion } : { kind: "current" };
+	} catch {
+		return { kind: "current" };
 	}
-	return { kind: "current" };
 }
 
 export async function getLatestPiVersion(
