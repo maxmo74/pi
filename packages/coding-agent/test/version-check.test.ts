@@ -15,11 +15,11 @@ import {
 import { allowNetwork } from "./test-network-env.ts";
 
 const originalSkipVersionCheck = process.env.PI_SKIP_VERSION_CHECK;
-const forkReleaseUrl = "https://github.com/maxmo74/pi/releases/latest/download/update-info.json";
+const forkReleaseUrl = "https://raw.githubusercontent.com/maxmo74/pi/update-info/patch/update-info.json";
 
 // Answer the fork endpoint and the upstream endpoint differently, the way a stale fork looks live.
 function stubReleases(fork: unknown, upstream: unknown) {
-	const fetchMock = vi.fn(async (url: string) => Response.json(url.includes("github.com") ? fork : upstream));
+	const fetchMock = vi.fn(async (url: string) => Response.json(url.endsWith("update-info.json") ? fork : upstream));
 	vi.stubGlobal("fetch", fetchMock);
 	return fetchMock;
 }

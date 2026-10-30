@@ -2,10 +2,12 @@ import { compare, valid } from "semver";
 import { fetchWithRetry } from "./management-http.ts";
 import { getPiUserAgent } from "./pi-user-agent.ts";
 
-// Fork build: point update checks at this repository's latest release so `pi update` installs a
-// patched build instead of the unpatched upstream one. The asset declares both version and
-// packageName; Pi's updater honours a package name that differs from PACKAGE_NAME.
-const LATEST_VERSION_URL = "https://github.com/maxmo74/pi/releases/latest/download/update-info.json";
+// Fork build: point update checks at this repository so `pi update` installs a patched build instead
+// of the unpatched upstream one. The file is committed to the `update-info` branch and served by
+// raw.githubusercontent.com, so publishing an update needs only a git push: no API credentials, and
+// no dependency on a GitHub Release existing. The asset declares both version and packageName;
+// Pi's updater honours a package name that differs from PACKAGE_NAME.
+const LATEST_VERSION_URL = "https://raw.githubusercontent.com/maxmo74/pi/update-info/patch/update-info.json";
 // Upstream keeps its own endpoint so a fork build can report that pi.dev moved ahead while this
 // repository has not published a matching build yet.
 const UPSTREAM_VERSION_URL = "https://pi.dev/api/latest-version";

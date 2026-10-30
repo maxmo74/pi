@@ -134,7 +134,10 @@ if (!options.publish) {
 
 execFileSync("npm", ["publish", "--access", "public"], { cwd: staging, stdio: "inherit" });
 
-// `pi update` reads this file from the release assets, so it names the version just published.
+// `pi update` reads this file from the raw-hosted update-info branch, so it names the version just
+// published.
 const note = existsSync(infoPath) ? JSON.parse(readFileSync(infoPath, "utf8")).note || defaultNote : defaultNote;
 writeFileSync(infoPath, `${JSON.stringify({ version, packageName: publishedName, note }, null, "	")}\n`);
-console.log(`\nPublished ${publishedName}@${version}. Commit the updated patch/update-info.json.`);
+console.log(`\nPublished ${publishedName}@${version}.`);
+console.log(`An install cannot update until this file reaches the update-info branch; FORK.md,`);
+console.log(`"Publishing an update" lists the git plumbing that pushes it without touching this tree.`);

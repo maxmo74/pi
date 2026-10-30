@@ -14,7 +14,7 @@ npm install -g @maxmo74/pi-coding-agent
 
 Requires Node.js 22.19 or newer. The binary is named `pi`, so this install takes precedence over an official `pi` on your `PATH`. Configuration, credentials and sessions in `~/.pi` are shared with official Pi, so existing logins carry over.
 
-**Updating:** `pi update` installs patched builds published from [maxmo74/pi](https://github.com/maxmo74/pi/releases), versioned `<upstream>-max.<revision>` - for example `1.4.0-max.2`. When Pi releases a new version before a patched build exists, `pi update` will not install the unpatched one; it says what is missing instead.
+**Updating:** `pi update` installs patched builds published from this repository, versioned `<upstream>-max.<revision>` - for example `1.4.0-max.2`. When Pi releases a new version before a patched build exists, `pi update` will not install the unpatched one; it says what is missing instead.
 
 **License:** MIT, as upstream. `LICENSE` is the upstream notice, unmodified; the additions in this fork are offered under the same terms. Source: [maxmo74/pi](https://github.com/maxmo74/pi), which tracks [earendil-works/pi](https://github.com/earendil-works/pi).
 

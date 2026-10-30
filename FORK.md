@@ -25,11 +25,11 @@ New files never conflict at rebase. The modified columns are where rebases hurt:
 
 - npm package `@maxmo74/pi-coding-agent`. One package: the published bundle inlines every workspace package.
 - Versions are `<upstream>-max.<revision>`, e.g. `1.4.0-max.2`. Prerelease suffix, not `+build`, because semver ignores build metadata and `pi update` would stop seeing upgrades.
-- `pi update` reads `https://github.com/maxmo74/pi/releases/latest/download/update-info.json`. A GitHub Release without that asset means no update path for anyone.
+- `pi update` reads `https://raw.githubusercontent.com/maxmo74/pi/update-info/patch/update-info.json`: `patch/update-info.json` on a single-file branch, pushed with the deploy key. No GitHub Release is used, because deploy keys cannot create releases and raw hosting means publishing needs no API credential at all.
 - `node scripts/publish-patched.mjs` stages and dry-runs; `--publish` publishes and rewrites `patch/update-info.json`. It refuses a dirty `packages/` tree, because publishing from a branch that lags the release commit silently ships a mix of revisions.
 - The staged tree is build output only, so `README.md` and `LICENSE` are composed at staging time: `patch/README.fork.md` followed by the upstream package README, and the repo root `LICENSE` unmodified. npm ships both only from the packed directory, and the package directory has no LICENSE of its own.
-- **Publish and create the GitHub release in one sitting.** While the `update-info.json` asset is missing, `pi update` on an installed fork build fails with `Could not determine latest pi version.` rather than reporting nothing.
-- Accepted risk, not a bug: `update-info.json` names the npm package `pi update` installs, and it is served unsigned from release assets that anyone with write access to this repository can edit after publication. Publishing makes you the update authority for every install. Trusted Publishing and branch protection are the mitigations, and neither exists yet.
+- **Publish and push the update pointer in the same run.** While the file is missing or stale, `pi update` on an installed fork build fails with `Could not determine latest pi version.` rather than reporting nothing.
+- Accepted risk, not a bug: that file names the npm package `pi update` installs, is served unsigned, and anyone who can push to this repository can change what everyone's installs run. Publishing makes you the update authority for every install. Branch protection is the mitigation; Trusted Publishing only covers npm itself.
 
 ### Open actions
 
@@ -56,6 +56,33 @@ Filed nowhere. Not our code, and filing them is a contribution to them, not prog
 - `origin` is this fork (`git@github.com:maxmo74/pi.git`), `upstream` is `https://github.com/earendil-works/pi.git`.
 - One permanent fork line, rebased onto `upstream/main`. It is `feat/session-move` today; `fork/main` is the better name now that it carries more than that feature. Feature branches only for experiments, and delete them when they land -- separate long-lived patch branches are how forks rot.
 - Never merge `upstream/main` into the fork line. Rebase, so the diff stays exactly our commits.
+
+## Publishing an update
+
+One run, in this order, from a commit that contains the upstream release commit:
+
+```
+npm run build && npm run check
+node scripts/publish-patched.mjs            # stage and dry-run, check the manifest
+node scripts/publish-patched.mjs --publish  # publishes and rewrites patch/update-info.json
+```
+
+Then push that file to the `update-info` branch without disturbing the working tree. It builds a commit
+from a temporary index, so nothing is staged or checked out, and it fast-forwards the branch instead
+of force-pushing:
+
+```
+blob=$(git hash-object -w patch/update-info.json)
+GIT_INDEX_FILE=/tmp/update-info.idx git update-index --add --cacheinfo 100644,"$blob",patch/update-info.json
+tree=$(GIT_INDEX_FILE=/tmp/update-info.idx git write-tree)
+parent=$(git rev-parse -q --verify refs/remotes/origin/update-info) || parent=
+if [ -n "$parent" ]; then commit=$(git commit-tree "$tree" -p "$parent" -m "release: <version>");
+else commit=$(git commit-tree "$tree" -m "release: <version>"); fi
+git push origin "$commit:refs/heads/update-info"
+git fetch origin update-info:refs/remotes/origin/update-info
+```
+
+`patch/update-info.json` is deliberately not tracked on the fork line: the branch copy is the published one, and tracking it here would create a conflict on every release.
 
 ## Commands
 
