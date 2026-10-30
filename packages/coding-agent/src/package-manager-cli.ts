@@ -38,7 +38,14 @@ import { spawnProcess, spawnProcessSync, waitForChildProcess } from "./utils/chi
 import { canonicalizePath, getCwdRelativePath } from "./utils/paths.ts";
 import { getPiUserAgent } from "./utils/pi-user-agent.ts";
 import { stripBom } from "./utils/text.ts";
-import { formatVersionCheckError, getLatestPiRelease, isNewerPackageVersion } from "./utils/version-check.ts";
+import {
+	formatUpstreamAheadNotice,
+	formatUpstreamAheadTitle,
+	formatVersionCheckError,
+	getForkUpdateStatus,
+	getLatestPiRelease,
+	isNewerPackageVersion,
+} from "./utils/version-check.ts";
 import {
 	cleanupWindowsSelfUpdateQuarantine,
 	quarantineWindowsNativeDependencies,
@@ -709,6 +716,12 @@ async function getSelfUpdatePlan(force: boolean): Promise<SelfUpdatePlan> {
 	}
 
 	console.log(chalk.green(`${APP_NAME} is already up to date (v${VERSION})`));
+	// The fork endpoint only ever offers patched builds, so explain when pi.dev has moved further.
+	const forkStatus = await getForkUpdateStatus(VERSION);
+	if (forkStatus.kind === "upstream-ahead") {
+		console.log(chalk.yellow(formatUpstreamAheadTitle(forkStatus.upstreamVersion)));
+		console.log(chalk.dim(formatUpstreamAheadNotice(VERSION, forkStatus.upstreamVersion)));
+	}
 	return { packageName, installSpec, version: latestRelease.version, shouldRun: false };
 }
 

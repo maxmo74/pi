@@ -133,7 +133,13 @@ import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { loadAllHighlightLanguages } from "../../utils/syntax-highlight.ts";
 import { stripBom } from "../../utils/text.ts";
 import { ensureTool, type ToolStatus } from "../../utils/tools-manager.ts";
-import { checkForNewPiVersion, type LatestPiRelease } from "../../utils/version-check.ts";
+import {
+	type ForkUpdateStatus,
+	formatUpstreamAheadNotice,
+	formatUpstreamAheadTitle,
+	getForkUpdateStatus,
+	type LatestPiRelease,
+} from "../../utils/version-check.ts";
 import { reportBug } from "./bug-report.ts";
 import { createChatViewport } from "./chat-viewport.ts";
 import { ArminComponent } from "./components/armin.ts";
@@ -1181,9 +1187,11 @@ export class InteractiveMode {
 		}
 
 		// Start version check asynchronously
-		checkForNewPiVersion(this.version).then((newRelease) => {
-			if (newRelease) {
-				this.showNewVersionNotification(newRelease);
+		void getForkUpdateStatus(this.version).then((status: ForkUpdateStatus) => {
+			if (status.kind === "patched-update") {
+				this.showNewVersionNotification(status.release);
+			} else if (status.kind === "upstream-ahead") {
+				this.showForkBehindNotification(status.upstreamVersion);
 			}
 		});
 
@@ -4764,6 +4772,19 @@ export class InteractiveMode {
 			this.chatContainer.addChild(new Spacer(1));
 		}
 		this.chatContainer.addChild(new ThemedText(changelogLine, 1, 0));
+		this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("warning", text)));
+		this.ui.requestRender();
+	}
+
+	showForkBehindNotification(upstreamVersion: string): void {
+		const title = formatUpstreamAheadTitle(upstreamVersion);
+		const notice = formatUpstreamAheadNotice(this.version, upstreamVersion);
+
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("warning", text)));
+		this.chatContainer.addChild(
+			new ThemedText(() => `${theme.bold(theme.fg("warning", title))}\n${theme.fg("muted", notice)}`, 1, 0),
+		);
 		this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("warning", text)));
 		this.ui.requestRender();
 	}
