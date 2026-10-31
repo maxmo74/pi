@@ -59,6 +59,9 @@ type UpdateTarget = { type: "all" } | { type: "self" } | { type: "extensions"; s
 const DEFAULT_INSTALLER_API_BASE = "https://pi.dev/api/installer/releases";
 const MANAGED_INSTALL_MARKER = "managed-install.json";
 const MANAGED_RELEASE_VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+// The package upstream publishes and whose installer manages installs. PACKAGE_NAME comes from the
+// installed package.json, so a repackaged build differs from this and must not be sent to pi.dev.
+const OFFICIAL_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
 
 function getActiveManagedInstallRoot(): string | undefined {
 	const configuredRoot = process.env.PI_MANAGED_INSTALL_ROOT?.trim();
@@ -1144,15 +1147,20 @@ export async function handlePackageCommand(
 					// The pi.dev installer migrates global npm installs to a managed install
 					// that pins all dependencies. It does not migrate pnpm, yarn, or bun installs.
 					if (installMethod === "npm") {
-						const installerCommand =
-							process.platform === "win32"
-								? 'powershell -c "irm https://pi.dev/install.ps1 | iex"'
-								: "curl -fsSL https://pi.dev/install.sh | sh";
-						console.log();
-						console.log(chalk.yellow(`This npm installation of ${APP_NAME} does not pin its dependencies.`));
-						console.log(chalk.yellow("Run the installer to migrate to a managed installation that does:"));
-						console.log();
-						console.log(`  ${chalk.bold(installerCommand)}`);
+						if (PACKAGE_NAME === OFFICIAL_PACKAGE_NAME) {
+							const installerCommand =
+								process.platform === "win32"
+									? 'powershell -c "irm https://pi.dev/install.ps1 | iex"'
+									: "curl -fsSL https://pi.dev/install.sh | sh";
+							console.log();
+							console.log(chalk.yellow(`This npm installation of ${APP_NAME} does not pin its dependencies.`));
+							console.log(chalk.yellow("Run the installer to migrate to a managed installation that does:"));
+							console.log();
+							console.log(`  ${chalk.bold(installerCommand)}`);
+						}
+						// A build published under another name has no managed installer: pi.dev's installer
+						// would install the official package over it and silently drop every patch, so the
+						// only instruction that is true here is the one that just worked.
 					}
 				}
 				return true;
