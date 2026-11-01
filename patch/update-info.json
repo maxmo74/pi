@@ -1,5 +1,5 @@
 {
-	"version": "1.4.0-max.3",
+	"version": "1.4.0-max.4",
 	"packageName": "@maxmo74/pi-coding-agent",
 	"note": "Unofficial pi fork: session moves in the /resume picker, plus selective upstream fixes."
 }
