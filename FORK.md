@@ -125,6 +125,22 @@ git fetch origin update-info:refs/remotes/origin/update-info
 
 `patch/update-info.json` is deliberately not tracked on the fork line: the branch copy is the published one, and tracking it here would create a conflict on every release.
 
+## Testing
+
+The coding-agent suite writes real session files into the sessions directory of the **real** agent profile, one
+project directory per test working directory: `getAgentDir()/sessions/<cwd escaped>`. A full run leaves about fifty
+`--var-folders-...` entries in `~/.pi/agent/sessions`, and the `/resume` picker's other-directories tab lists every
+one of them as a project. Upstream behaviour, but it is our machine that gets littered. Run the suite against a
+scratch profile instead:
+
+```
+PI_CODING_AGENT_DIR=$(mktemp -d) ./test.sh
+```
+
+`PI_CODING_AGENT_DIR` is the lever because session paths resolve through `getAgentDir()`; `PI_CODING_AGENT_SESSION_DIR`
+only steers the CLI's own startup resolution (`main.ts`) and does nothing for tests that build a SessionManager
+directly.
+
 ## Commands
 
 ```
