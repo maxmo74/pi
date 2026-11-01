@@ -12,7 +12,7 @@ This package is **not** the official [Pi](https://pi.dev) release and is not aff
 npm install -g @maxmo74/pi-coding-agent
 ```
 
-Requires Node.js 22.19 or newer, installed in a way you control - see **Switching from an official install** below. Configuration, credentials and sessions live in `~/.pi`, separate from the program, so existing logins and history carry over.
+Requires Node.js 22.19 or newer, installed in a way you control - see **Switching from an official install** below. Node 22 LTS is what upstream ships and what this fork's tests run on; newer majors work too. Configuration, credentials and sessions live in `~/.pi`, separate from the program, so existing logins and history carry over.
 
 **Switching from an official install**
 
