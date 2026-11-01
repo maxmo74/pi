@@ -79,12 +79,15 @@ version to publish, `v<upstream>-max.<revision>` with the upstream part matching
 so pushing the same tag twice fails on a duplicate version instead of publishing something else. `workflow_dispatch`
 with a revision input exists for the run that binds a freshly registered publisher config.
 
-A dispatched publish leaves no tag, so tag the commit it published afterwards -- `piFork.sourceCommit` in the
-published manifest names it:
+Tag **before** publishing, never after. A tag is also a trigger, so tagging a version a `workflow_dispatch` run
+already published just starts a second run that fails with `403 cannot publish over the previously published
+versions`. The tag is still a useful marker for the commit that was published (`piFork.sourceCommit` in the
+published manifest names it), which is how `v1.4.0-max.0` and `v1.4.0-max.1` ended up: right commits, wasted runs.
 
-```
-git tag v<version> <sourceCommit> -m "published <version> from a workflow_dispatch run" && git push origin v<version>
-```
+Our tags match upstream's `build-binaries.yml` trigger (`push: tags: v*`) as well as ours, so every tag used to
+start a six-platform Bun build that failed minutes later for want of upstream's release secrets. That workflow is
+disabled on the fork (`gh workflow disable`), like Nix, npm audit and Publish Model Catalog. If a future rebase
+re-enables it, expect the noise back.
 
 `1.4.0-max.0` has no provenance, because the bootstrap publish came from the laptop. Everything since carries a
 SLSA provenance statement whose subject digest matches the tarball and whose builder is this repository and workflow;
