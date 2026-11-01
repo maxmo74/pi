@@ -21,7 +21,7 @@ file, so one branch becomes unreachable: gone from the transcript, from the mode
 | --- | --- | --- |
 | `v1.4.0` (upstream release tag) | `node scripts/probe-double-writer.mjs packages/coding-agent/src/core/session-manager.ts` | reproduced |
 | `upstream/main` @ `b556cfe5b` (well past 1.4.0) | same probe on a worktree of the tip | reproduced, identical trace |
-| our published `1.4.0-max.2` and `max.3` | same probe against `dist/core/session-manager.js` | reproduced |
+| our published `1.4.0-max.2`, `max.3` and `max.4` | same probe against `dist/core/session-manager.js` | reproduced, identical trace |
 
 Canonical trace, produced by the probe:
 
@@ -55,7 +55,12 @@ cd pi && npm ci --ignore-scripts && npm run build
 node scripts/probe-double-writer.mjs                       # expect exit 0, prints REPRODUCED
 ```
 
-Then the same through the real CLI, which is what a maintainer will actually run. Terminal A: `pi`, send
+Then the same through the real CLI, which is what a maintainer will actually run. **Run this against
+official pi, not the fork**: the fork refuses the second resume by design, which would look like a fix
+rather than a repro. If you only have the fork, set `PI_ALLOW_SHARED_SESSION=1` on the second window. If
+you use the fork's own `SessionManager`, the probe above already covers it.
+
+Terminal A: `pi`, send
 one message, leave it running. Terminal B, same directory: `pi --continue`, send a message, quit B.
 Back in A, send another message, quit A. `pi --resume`, pick the session, and check whether B's message
 is there. `grep` for its text in the session file under `~/.pi/agent/sessions/` to show it was written.
@@ -98,8 +103,17 @@ PID-liveness and, on Linux, a `/proc/<pid>/stat` start-time check). Resume is re
 `SessionManager.open()` at `--session`, `--session-id`, `--resume`, `--continue`, `/resume` and in
 `AgentSessionRuntime.switchSession()`, naming the pid; `PI_ALLOW_SHARED_SESSION=1` overrides. It refuses
 only *other* processes' registrations, so re-selecting your own session is a no-op and two pi windows on
-different sessions stay normal. Note for the draft: do not paste our implementation as a demanded
-design, and do not link the fork unless a maintainer asks.
+different sessions stay normal.
+
+Be precise about what that does and does not fix, because the draft leans on it: the guard sits at pi's
+resume entry points, not in the storage layer. `node scripts/probe-double-writer.mjs` still reproduces
+the fork against `1.4.0-max.4`, because the probe drives `SessionManager` directly, which is what an
+extension or an RPC client does too. So our fork keeps an ordinary user from getting into this, and does
+not make the file safe for two writers. That is a reason to fix it upstream rather than a reason to skip
+the report.
+
+Note for the draft: do not paste our implementation as a demanded design, and do not link the fork unless
+a maintainer asks.
 
 ## Rules for filing
 
