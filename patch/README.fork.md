@@ -6,11 +6,10 @@ This package is **not** the official [Pi](https://pi.dev) release and is not aff
 
 **What else differs from official Pi:**
 
-- `pi update` resolves new versions from this fork's releases, and when official Pi is ahead of what this fork has rebuilt, it says so instead of pretending nothing exists.
-- An install of this package is never told to run pi.dev's installer. That command installs official Pi over this build and silently drops every patch here.
-- Bug fixes are adopted selectively, and the fork keeps a ledger of what is known, what it carries and what it deliberately does not.
+- `pi update` resolves new versions from this fork's releases, and says so when official Pi is ahead of the newest fork build.
+- An install of this package is never told to run pi.dev's installer, which would install official Pi over this build and drop every patch here.
 
-**Why a fork instead of a pull request:** the session move was proposed upstream in [earendil-works/pi#11583](https://github.com/earendil-works/pi/issues/11583) and closed without action. This is now a maintained personal fork rather than a single-feature patch; nothing else about how Pi works is changed.
+**Why a fork instead of a pull request:** the session move was proposed upstream in [earendil-works/pi#11583](https://github.com/earendil-works/pi/issues/11583) and closed without action. This is a maintained personal fork; nothing else about how Pi works is changed.
 
 **Install**
 
