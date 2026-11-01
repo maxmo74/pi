@@ -16,7 +16,11 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const packageDir = join(repoRoot, "packages", "coding-agent");
 const infoPath = join(repoRoot, "patch", "update-info.json");
 const publishedName = "@maxmo74/pi-coding-agent";
-const defaultNote = "Unofficial pi fork: adds session moves to the /resume picker.";
+const defaultNote = "Unofficial pi fork: session moves in the /resume picker, plus selective upstream fixes.";
+// The registry page is where most people first read what a package is, and the manifest description is upstream's.
+// Overridden at staging time so the fork's identity shows on npm without a tracked diff in the package manifest.
+const publishedDescription =
+	"Unofficial pi fork by maxmo74: session moves in the /resume picker, plus selective fixes. Independent of and not affiliated with pi.dev.";
 
 function printUsage() {
 	console.log(`Usage: node scripts/publish-patched.mjs [options]
@@ -123,6 +127,7 @@ const published = {
 	...source,
 	name: publishedName,
 	version,
+	description: publishedDescription,
 	// The staged tree holds build output and no sources, so lifecycle scripts that rebuild must go:
 	// the package's prepublishOnly runs `clean` and would delete the bundle being published.
 	scripts: {},

@@ -2,9 +2,15 @@
 
 This package is **not** the official [Pi](https://pi.dev) release and is not affiliated with or endorsed by its maintainers. The official package is [`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent).
 
-**What it adds:** one thing. In the `/resume` session picker, pressing `Ctrl+Y` moves a session that lives in another directory into the directory you started Pi from, keeping its history and id, so it shows up in this project's list. The key is configurable as `app.session.move`. When the highlighted session cannot be moved, the key does what it normally does in the search field.
+**What it adds:** in the `/resume` session picker, pressing `Ctrl+Y` moves a session that lives in another directory into the directory you started Pi from, keeping its history and id, so it shows up in this project's list. The key is configurable as `app.session.move`. When the highlighted session cannot be moved, the key does what it normally does in the search field.
 
-**Why a fork instead of a pull request:** the feature was proposed upstream in [earendil-works/pi#11583](https://github.com/earendil-works/pi/issues/11583) and closed without action. Everything else about how Pi works is unchanged.
+**What else differs from official Pi:**
+
+- `pi update` resolves new versions from this fork's releases, and when official Pi is ahead of what this fork has rebuilt, it says so instead of pretending nothing exists.
+- An install of this package is never told to run pi.dev's installer. That command installs official Pi over this build and silently drops every patch here.
+- Bug fixes are adopted selectively, and the fork keeps a ledger of what is known, what it carries and what it deliberately does not.
+
+**Why a fork instead of a pull request:** the session move was proposed upstream in [earendil-works/pi#11583](https://github.com/earendil-works/pi/issues/11583) and closed without action. This is now a maintained personal fork rather than a single-feature patch; nothing else about how Pi works is changed.
 
 **Install**
 
