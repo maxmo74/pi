@@ -8,6 +8,7 @@ This package is **not** the official [Pi](https://pi.dev) release and is not aff
 
 - `pi update` resolves new versions from this fork's releases, and says so when official Pi is ahead of the newest fork build.
 - An install of this package is never told to run pi.dev's installer, which would install official Pi over this build and drop every patch here.
+- Resuming a session that another running Pi already has is refused, naming the process that holds it. Two writers on one session file fork its history and only the branch written last stays visible, with no warning. `PI_ALLOW_SHARED_SESSION=1` resumes anyway.
 
 **Why a fork instead of a pull request:** the session move was proposed upstream in [earendil-works/pi#11583](https://github.com/earendil-works/pi/issues/11583) and closed without action. This is a maintained personal fork; nothing else about how Pi works is changed.
 

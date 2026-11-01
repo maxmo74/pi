@@ -113,6 +113,7 @@ import {
 	sessionEntryToContextMessages,
 	type UsageEntry,
 } from "../../core/session-manager.ts";
+import { getSessionOpenRefusal } from "../../core/session-ownership.ts";
 import type { FullscreenExitOutput, TuiMode } from "../../core/settings-manager.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import { getSourcePackageKey, type SourceInfo } from "../../core/source-info.ts";
@@ -5888,6 +5889,13 @@ export class InteractiveMode {
 		options?: Parameters<ExtensionCommandContext["switchSession"]>[1],
 	): Promise<{ cancelled: boolean }> {
 		this.clearStatusIndicator();
+		// Refusing here keeps the current session alive. Letting the runtime throw would be handled
+		// as a failed resume, which is not what a refused choice means.
+		const refusal = getSessionOpenRefusal(sessionPath);
+		if (refusal) {
+			this.showWarning(refusal);
+			return { cancelled: true };
+		}
 		try {
 			const result = await this.runtimeHost.switchSession(sessionPath, {
 				withSession: options?.withSession,

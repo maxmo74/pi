@@ -143,8 +143,8 @@ function removeStaleRecord(path: string): void {
 /**
  * Report whether a recorded owner process is still running. Anything other than a confirmed
  * absence counts as running, including a permission error, so an uncertain check never allows
- * a move. On non-Linux platforms a reused PID is indistinguishable and also counts as running,
- * which can refuse a move that would have been safe.
+ * the operation. On non-Linux platforms a reused PID is indistinguishable and also counts as
+ * running, which can refuse an operation that would have been safe.
  */
 function processIsLive(pid: number): boolean {
 	try {
@@ -158,7 +158,67 @@ function processIsLive(pid: number): boolean {
 /** Reject live users and, on Linux, untracked Pi processes. Caller must hold the ownership gate. */
 export function assertSessionUnused(path: string): void {
 	const canonical = canonicalSessionPath(path);
-	const registered = new Set<number>();
+	const owners = collectLiveOwners();
+	for (const owner of owners) {
+		if (owner.sessions.includes(canonical))
+			throw new Error(`Session is open in process ${owner.pid}. Close it before moving.`);
+	}
+	// Detecting Pi processes that predate ownership requires scanning the process table, and the
+	// portable process list is not reliable enough to do so outside Linux. Those platforms only
+	// enforce ownership registered by cooperating Pi instances.
+	if (process.platform !== "linux") return;
+	const registered = new Set(owners.map((owner) => owner.pid));
+	const processes = execFileSync("ps", ["-u", String(process.getuid!()), "-o", "pid=,comm=,args="], {
+		encoding: "utf8",
+	});
+	for (const line of processes.split("\n")) {
+		const match = line.trim().match(/^(\d+)\s+(\S+)\s+(.*)$/);
+		if (!match) continue;
+		const pid = Number(match[1]);
+		if (pid === process.pid || registered.has(pid)) continue;
+		const isPi =
+			match[2] === "pi" ||
+			/(?:^|\s)\S*(?:pi-coding-agent\/(?:dist|src)\/cli\.(?:js|ts)|\/pi\/packages\/coding-agent\/src\/cli\.ts)(?:\s|$)/.test(
+				match[3],
+			);
+		if (isPi)
+			throw new Error(
+				`Pi process ${pid} does not report session ownership. Close older Pi instances before moving.`,
+			);
+	}
+}
+
+/**
+ * Refuse resuming a session a live Pi already holds. Appends carry the writer's own leaf, so two
+ * writers on one file fork its history and a later read follows the branch that appended last,
+ * hiding the other one without warning. This process's own registrations never refuse, so
+ * re-selecting the current session stays a no-op and unrelated sessions are unaffected. Returns
+ * the message instead of throwing so the interactive picker can refuse without ending its session.
+ * Set PI_ALLOW_SHARED_SESSION to resume anyway.
+ */
+export function getSessionOpenRefusal(path: string): string | undefined {
+	if (process.env.PI_ALLOW_SHARED_SESSION) return undefined;
+	const canonical = canonicalSessionPath(path);
+	for (const owner of collectLiveOwners()) {
+		if (owner.pid === process.pid) continue;
+		if (owner.sessions.includes(canonical))
+			return `This session is open in process ${owner.pid}. Close that Pi first, or set PI_ALLOW_SHARED_SESSION to resume anyway. Two writers on one session fork its history: only the branch written last stays visible.`;
+	}
+	return undefined;
+}
+
+interface LiveOwner {
+	pid: number;
+	sessions: unknown[];
+}
+
+/**
+ * Owners that a record claims are running, after records proven stale are dropped. Removal is
+ * idempotent and its failure is ignored, so this is safe with and without the ownership gate.
+ * Records are written only by Pi in a directory only this user can read.
+ */
+function collectLiveOwners(): LiveOwner[] {
+	const owners: LiveOwner[] = [];
 	for (const file of readdirSync(root)) {
 		if (!/^\d+\.json$/.test(file)) continue;
 		const pid = Number(file.split(".")[0]);
@@ -182,7 +242,7 @@ export function assertSessionUnused(path: string): void {
 		}
 		if (record.start !== null) {
 			// Linux records carry a start identity. A mismatch means another process reused the PID,
-			// so the record is provably stale. The gate makes removing it safe.
+			// so the record is provably stale.
 			if (start === undefined || record.start !== start) {
 				removeStaleRecord(join(root, file));
 				continue;
@@ -192,30 +252,7 @@ export function assertSessionUnused(path: string): void {
 			removeStaleRecord(join(root, file));
 			continue;
 		}
-		registered.add(pid);
-		if (record.sessions.includes(canonical))
-			throw new Error(`Session is open in process ${pid}. Close it before moving.`);
+		owners.push({ pid, sessions: record.sessions });
 	}
-	// Detecting Pi processes that predate ownership requires scanning the process table, and the
-	// portable process list is not reliable enough to do so outside Linux. Those platforms only
-	// enforce ownership registered by cooperating Pi instances.
-	if (process.platform !== "linux") return;
-	const processes = execFileSync("ps", ["-u", String(process.getuid!()), "-o", "pid=,comm=,args="], {
-		encoding: "utf8",
-	});
-	for (const line of processes.split("\n")) {
-		const match = line.trim().match(/^(\d+)\s+(\S+)\s+(.*)$/);
-		if (!match) continue;
-		const pid = Number(match[1]);
-		if (pid === process.pid || registered.has(pid)) continue;
-		const isPi =
-			match[2] === "pi" ||
-			/(?:^|\s)\S*(?:pi-coding-agent\/(?:dist|src)\/cli\.(?:js|ts)|\/pi\/packages\/coding-agent\/src\/cli\.ts)(?:\s|$)/.test(
-				match[3],
-			);
-		if (isPi)
-			throw new Error(
-				`Pi process ${pid} does not report session ownership. Close older Pi instances before moving.`,
-			);
-	}
+	return owners;
 }

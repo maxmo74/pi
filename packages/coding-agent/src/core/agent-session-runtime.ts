@@ -13,7 +13,7 @@ import { emitSessionShutdownEvent } from "./extensions/runner.ts";
 import type { CreateAgentSessionResult } from "./sdk.ts";
 import { assertSessionCwdExists } from "./session-cwd.ts";
 import { SessionManager } from "./session-manager.ts";
-import { withSessionOwnershipGate } from "./session-ownership.ts";
+import { getSessionOpenRefusal, withSessionOwnershipGate } from "./session-ownership.ts";
 
 /**
  * Result returned by runtime creation.
@@ -233,6 +233,10 @@ export class AgentSessionRuntime {
 		}
 
 		const previousSessionFile = this.session.sessionFile;
+		const refusal = getSessionOpenRefusal(sessionPath);
+		if (refusal) {
+			throw new Error(refusal);
+		}
 		const sessionManager = SessionManager.open(sessionPath, undefined, options?.cwdOverride);
 		await this.replaceWithManager(sessionManager, "resume", previousSessionFile, options?.projectTrustContextFactory);
 		await this.finishSessionReplacement(options?.withSession);

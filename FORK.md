@@ -4,7 +4,7 @@
 
 A maintained, independent, unofficial Pi. It started for one reason -- **moving a session from another directory into the directory Pi was started from, from the `/resume` picker** -- and upstream declined that in [#11583](https://github.com/earendil-works/pi/issues/11583), closed `no-action`. The suggested alternative, `pi --session <id>` per session, is unusable at 50-60 sessions. Do not relitigate that issue.
 
-It is now the build I run daily, so it also carries the correctness and update-path changes I want in it: `pi update` resolves from this fork's releases, and an install published under this name is never sent back to pi.dev's installer. Two rules keep it rebaseable. Every divergence is listed in the Changes table, and every known defect is in the Bug ledger whether we carry a fix or not. If upstream ever accepts session moves, most of the diff loses its reason and the rest is plumbing to drop back onto upstream `main`.
+It is now the build I run daily, so it also carries the correctness and update-path changes I want in it: `pi update` resolves from this fork's releases, an install published under this name is never sent back to pi.dev's installer, and resuming a session another running Pi holds is refused. Two rules keep it rebaseable. Every divergence is listed in the Changes table, and every known defect is in the Bug ledger whether we carry a fix or not. If upstream ever accepts session moves, most of the diff loses its reason and the rest is plumbing to drop back onto upstream `main`.
 
 ## Changes
 
@@ -13,10 +13,11 @@ Status means upstream intent, not effort: `never` would be rejected on sight, `u
 | Cluster | New files | Files it modifies in upstream | Status |
 | --- | --- | --- | --- |
 | Session move: `app.session.move`, `Ctrl+Y` in the picker | `src/core/session-move.ts`, `src/core/session-ownership.ts`, `src/core/session-delete.ts` | `src/core/keybindings.ts`, `src/core/session-manager.ts`, `src/core/agent-session-runtime.ts`, `src/modes/interactive/components/session-selector.ts`, `src/modes/interactive/interactive-mode.ts`, `src/core/export-html/index.ts`, `schemas/keybindings.schema.json` | rejected #11583 |
+| Resume guard: refuse to open a session a live Pi holds, `PI_ALLOW_SHARED_SESSION` to override | none | `src/main.ts`, `src/core/agent-session-runtime.ts`, `src/modes/interactive/interactive-mode.ts` | unfiled |
 | Release staging: build, rename, version, publish | `scripts/publish-patched.mjs`, `patch/README.fork.md`, `.github/workflows/publish.yml` | none; writes `patch/update-info.json` on each publish | never |
 | Update endpoint: `pi update` resolves from this fork's releases, and says so when pi.dev is ahead of the fork's base | none | `src/utils/version-check.ts`, `src/package-manager-cli.ts`, `src/modes/interactive/interactive-mode.ts` | never |
 
-New files never conflict at rebase. The modified columns are where rebases hurt: against current upstream, five of them have changed since our base -- `agent-session-runtime.ts`, `session-manager.ts`, `session-selector.ts`, `interactive-mode.ts`, `package-manager-cli.ts`. See Commands for the check.
+New files never conflict at rebase. The modified columns are where rebases hurt: against current upstream, six of them have changed since our base -- `agent-session-runtime.ts`, `session-manager.ts`, `session-selector.ts`, `interactive-mode.ts`, `package-manager-cli.ts`, `main.ts`. See Commands for the check.
 
 `version-check.ts` deliberately keeps asking pi.dev, once, and only when the fork has nothing newer. That request is the whole cost of the "upstream released it, this fork hasn't rebuilt it" notice. Paths above are relative to `packages/coding-agent/` except `scripts/` and `patch/`, which are repo root.
 
@@ -45,6 +46,7 @@ Defects found in upstream code, whether or not we fix them here. Features are in
 
 | What | Detail | In this fork | Upstream issue |
 | --- | --- | --- | --- |
+| Resuming one session in two Pi processes forks its history | Appends carry the writer's own leaf and nothing revalidates the file, so the first window's second append parents to a stale entry: `B1 -> A1 <- A2`. A later read takes the last line of the file as leaf, so one branch turns invisible in the transcript, in the context sent to the model and in `/export`, while its bytes sit unreferenced in the file with no warning and no tool that shows them. Measured with two `SessionManager`s on one file. Worse in one case: `_rewriteFile()` opens with `"w"`, so the only path that rewrites an existing file, opening a session older than version 3, truncates it and deletes the other branch if that branch appended after the read. | fixed: `getSessionOpenRefusal()` refuses `--session`, `--session-id`, `--resume`, `--continue`, `/resume` and the runtime's `switchSession()`, and `PI_ALLOW_SHARED_SESSION` overrides | to file |
 | Post-update advice sends installs to pi.dev | After a successful self-update, every npm-detected install is told to run pi.dev's installer, which installs official Pi over the running build. Renamed builds have no managed installer at all, so following the advice silently removes every patch they carry. | fixed: `getSelfUpdateAdvice()` gates on the official package name, pinned by `test/package-manager-cli.test.ts` | none |
 | Update path infers a prefix it does not own | `getInferredNpmInstall()` decides an npm global prefix from path shape alone, so an install relocated by a package manager -- Homebrew's `Cellar/<formula>/<version>/libexec`, a Nix store path, a distro overlay -- is mistaken for a user-owned global prefix, and `pi update` installs the new version inside that tree, untracked by whatever owns it. Reproduced against upstream 1.3.0's published tarball in a Cellar-shaped layout with `npm root -g` pointing elsewhere. Keep it generic if we ever fix it: the inference should be distrusted whenever `npm root -g` answers and the package is not under what it reports, which covers every relocating manager without naming one. Confirm on Linux before filing. | not adopted | none |
 | Test suite writes into the developer's real agent profile | `getAgentDir()/sessions/<cwd>` is where session files go, the suite runs against the real profile with temporary working directories, so each test cwd becomes a project bucket in the developer's own `/resume` list -- about fifty per full run. Verified it never writes into a bucket for a real directory, so this is pollution, not damage. | not adopted; run `PI_CODING_AGENT_DIR=$(mktemp -d) ./test.sh`, see Testing | none |
@@ -61,6 +63,7 @@ Session handles are not in the ledger. Upstream's HTML export path and the picke
 - **Our ownership registry is the main hazard.** Upstream has no `dispose()` and no ownership concept; we added both, and a session opened without `dispose()` blocks relocation for the process lifetime. After every rebase, run `grep -rn "SessionManager.open(" packages/coding-agent/src` and check each new call site releases ownership. Two upstream sites already needed fixing: the HTML export path and the picker's rename callback.
 - **`dispose()` clearing `sessionFile` is our behaviour change.** One upstream test read the path afterwards and had to capture it earlier (`test/suite/agent-session-runtime.test.ts`).
 - **`Ctrl+Y` is claimed only when a move is possible**, otherwise it forwards to the search field so editor yank keeps working. Same convention as `app.session.deleteNoninvasive`.
+- **The resume guard shares only the live-owner scan with `assertSessionUnused()`, never the guard itself.** `assertSessionUnused()` also refuses when an untracked Pi process exists, which is ordinary while resuming a *different* session; the resume guard must not use it, and two Pi windows on different sessions must stay possible. The check runs before `SessionManager.open()`, which can rewrite an older-format file, so a refusal never touches the session.
 - **The self-update advice must stay gated.** It is in the ledger above; the part that rebases badly is that upstream's own `src/cli/startup-ui.ts` gates on the same constant while the update path does not, so a rebase that takes upstream's version of `package-manager-cli.ts` restores the footgun silently. The test is the only durable defence.
 - Upstream test files we had to edit, and the likely conflict points: `test/extensions-runner.test.ts` (fixture moved off `ctrl+y` to unclaimed `ctrl+h`), `test/suite/agent-session-runtime.test.ts`, `test/version-check.test.ts` (asserts the update URL), `test/package-command-paths.test.ts` (its mock answers pi.dev and counts requests).
 
@@ -148,6 +151,11 @@ PI_CODING_AGENT_DIR=$(mktemp -d) ./test.sh
 `PI_CODING_AGENT_DIR` is the lever because session paths resolve through `getAgentDir()`; `PI_CODING_AGENT_SESSION_DIR`
 only steers the CLI's own startup resolution (`main.ts`) and does nothing for tests that build a SessionManager
 directly.
+
+To drive a CLI path end to end, hold a session file from a second process and run the built CLI against a scratch
+profile: `node --experimental-strip-types packages/coding-agent/test/fixtures/session-owner.ts <file>` keeps the file
+registered while `PI_CODING_AGENT_DIR=<profile> node packages/coding-agent/dist/cli.js --continue -p hi` reports what
+the CLI would do. Used to verify the resume guard's CLI call sites; the unit tests cover the paths that stay allowed.
 
 ## Commands
 
