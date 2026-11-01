@@ -2,8 +2,40 @@ import { compare, valid } from "semver";
 import { fetchWithRetry } from "./management-http.ts";
 import { getPiUserAgent } from "./pi-user-agent.ts";
 
-const LATEST_VERSION_URL = "https://pi.dev/api/latest-version";
+// Fork build: point update checks at this repository so `pi update` installs a patched build instead
+// of the unpatched upstream one. The file is committed to the `update-info` branch and served by
+// raw.githubusercontent.com, so publishing an update needs only a git push: no API credentials, and
+// no dependency on a GitHub Release existing. The asset declares both version and packageName;
+// Pi's updater honours a package name that differs from PACKAGE_NAME.
+const LATEST_VERSION_URL = "https://raw.githubusercontent.com/maxmo74/pi/update-info/patch/update-info.json";
+// Upstream keeps its own endpoint so a fork build can report that pi.dev moved ahead while this
+// repository has not published a matching build yet.
+const UPSTREAM_VERSION_URL = "https://pi.dev/api/latest-version";
 const DEFAULT_VERSION_CHECK_TIMEOUT_MS = 10000;
+// Applied to this fork's versions, which read <upstream>-max.<revision>.
+const forkSuffix = /-max\.\d+$/;
+
+/** Upstream version a fork build was cut from, for example "1.4.0-max.2" becomes "1.4.0". */
+export function forkBaseVersion(version: string): string {
+	return version.replace(forkSuffix, "");
+}
+
+/** What a fork build should tell the user about updates right now. */
+export type ForkUpdateStatus =
+	| { kind: "patched-update"; release: LatestPiRelease }
+	| { kind: "upstream-ahead"; upstreamVersion: string }
+	| { kind: "current" };
+
+/** Title line for the notice shown when upstream shipped a release this fork has not rebuilt. */
+export function formatUpstreamAheadTitle(upstreamVersion: string): string {
+	return `New pi ${upstreamVersion} released - maxmo74 reviewing it. Or napping...`;
+}
+
+/** One-line body for that notice: what the fork still owes before an update exists. */
+export function formatUpstreamAheadNotice(currentVersion: string, upstreamVersion: string): string {
+	// The command name is literal because this module deliberately does not import the app config.
+	return `Your build is ${currentVersion}; "pi update" waits for ${upstreamVersion}-max.0.`;
+}
 
 export interface LatestPiRelease {
 	version: string;
@@ -48,14 +80,15 @@ export function isNewerPackageVersion(candidateVersion: string, currentVersion: 
 	return candidateVersion.trim() !== currentVersion.trim();
 }
 
-export async function getLatestPiRelease(
+async function fetchReleaseAt(
+	url: string,
 	currentVersion: string,
-	options: { timeoutMs?: number; retry?: boolean } = {},
+	options: { timeoutMs?: number; retry?: boolean },
 ): Promise<LatestPiRelease | undefined> {
 	if (process.env.PI_OFFLINE) return undefined;
 
 	const response = await fetchWithRetry(
-		LATEST_VERSION_URL,
+		url,
 		{
 			headers: {
 				"User-Agent": getPiUserAgent(currentVersion),
@@ -85,6 +118,60 @@ export async function getLatestPiRelease(
 		packageName,
 		...(note ? { note } : {}),
 	};
+}
+
+export async function getLatestPiRelease(
+	currentVersion: string,
+	options: { timeoutMs?: number; retry?: boolean } = {},
+): Promise<LatestPiRelease | undefined> {
+	return fetchReleaseAt(LATEST_VERSION_URL, currentVersion, options);
+}
+
+/** Latest release published by pi.dev itself, which this fork may not have rebuilt yet. */
+export async function getUpstreamPiRelease(
+	currentVersion: string,
+	options: { timeoutMs?: number; retry?: boolean } = {},
+): Promise<LatestPiRelease | undefined> {
+	return fetchReleaseAt(UPSTREAM_VERSION_URL, currentVersion, options);
+}
+
+/**
+ * The upstream version this build is missing, if any: newer than the upstream release the build was
+ * cut from. Comparing against the base version keeps this fork's own `-max` revisions from reading
+ * as ahead of upstream.
+ */
+export function upstreamVersionAhead(
+	currentVersion: string,
+	upstreamRelease: LatestPiRelease | undefined,
+): string | undefined {
+	if (!upstreamRelease) return undefined;
+	const comparison = comparePackageVersions(upstreamRelease.version, forkBaseVersion(currentVersion));
+	return (comparison ?? 0) > 0 ? upstreamRelease.version : undefined;
+}
+
+/**
+ * Report what a fork build should say about updates. A patched release always wins; otherwise a
+ * newer upstream release means the fork still owes a rebuild. Any unusable answer reports "current"
+ * so a version check never nags, and never throws, because of the network.
+ */
+export async function getForkUpdateStatus(
+	currentVersion: string,
+	options: { timeoutMs?: number; retry?: boolean } = {},
+): Promise<ForkUpdateStatus> {
+	try {
+		if (process.env.PI_SKIP_VERSION_CHECK) return { kind: "current" };
+		const [patched, upstream] = await Promise.all([
+			getLatestPiRelease(currentVersion, options),
+			getUpstreamPiRelease(currentVersion, options),
+		]);
+		if (patched && isNewerPackageVersion(patched.version, currentVersion)) {
+			return { kind: "patched-update", release: patched };
+		}
+		const upstreamVersion = upstreamVersionAhead(currentVersion, upstream);
+		return upstreamVersion ? { kind: "upstream-ahead", upstreamVersion } : { kind: "current" };
+	} catch {
+		return { kind: "current" };
+	}
 }
 
 export async function getLatestPiVersion(

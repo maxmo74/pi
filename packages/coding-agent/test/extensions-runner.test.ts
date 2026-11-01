@@ -314,9 +314,10 @@ describe("ExtensionRunner", () => {
 		});
 
 		it("warns but allows when non-reserved action has multiple keys", async () => {
+			// ctrl+h is unclaimed by any default binding, so the reported conflict stays deterministic.
 			const extCode = `
 				export default function(pi) {
-					pi.registerShortcut("ctrl+y", {
+					pi.registerShortcut("ctrl+h", {
 						description: "Overrides multi-key non-reserved",
 						handler: async () => {},
 					});
@@ -328,13 +329,13 @@ describe("ExtensionRunner", () => {
 
 			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
 			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
-			const keybindings = { ...defaultKeybindings, "app.clipboard.pasteImage": ["ctrl+x", "ctrl+y"] as KeyId[] };
+			const keybindings = { ...defaultKeybindings, "app.clipboard.pasteImage": ["ctrl+x", "ctrl+h"] as KeyId[] };
 			const shortcuts = runner.getShortcuts(keybindings);
 
 			expect(warnSpy).toHaveBeenCalledWith(
 				expect.stringContaining("built-in shortcut for app.clipboard.pasteImage"),
 			);
-			expect(shortcuts.has("ctrl+y")).toBe(true);
+			expect(shortcuts.has("ctrl+h")).toBe(true);
 
 			warnSpy.mockRestore();
 		});

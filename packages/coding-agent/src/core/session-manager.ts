@@ -38,6 +38,7 @@ import {
 	createCompactionSummaryMessage,
 	createCustomMessage,
 } from "./messages.ts";
+import { changeSessionOwnership, withSessionFileUsage } from "./session-ownership.ts";
 export const CURRENT_SESSION_VERSION = 3;
 
 export interface SessionHeader {
@@ -986,7 +987,19 @@ async function listSessionsFromDir(
  */
 export class SessionManager {
 	private sessionId: string = "";
-	private sessionFile: string | undefined;
+	private ownedSessionFile: string | undefined;
+	private get sessionFile(): string | undefined {
+		return this.ownedSessionFile;
+	}
+	private set sessionFile(next: string | undefined) {
+		if (this.persist) changeSessionOwnership(this.ownedSessionFile, next);
+		this.ownedSessionFile = next;
+	}
+
+	/** Release ownership once this manager will no longer be used. */
+	dispose(): void {
+		this.sessionFile = undefined;
+	}
 	private sessionDir: string;
 	private cwd: string;
 	private persist: boolean;
@@ -1012,12 +1025,17 @@ export class SessionManager {
 			mkdirSync(this.sessionDir, { recursive: true });
 		}
 
-		if (sessionFile) {
-			this._setSessionFile(sessionFile, preloadedFileEntries);
-		} else if (preloadedFileEntries?.length) {
-			this._loadEntries(preloadedFileEntries, newSessionOptions);
-		} else {
-			this.newSession(newSessionOptions);
+		try {
+			if (sessionFile) {
+				this._setSessionFile(sessionFile, preloadedFileEntries);
+			} else if (preloadedFileEntries?.length) {
+				this._loadEntries(preloadedFileEntries, newSessionOptions);
+			} else {
+				this.newSession(newSessionOptions);
+			}
+		} catch (error) {
+			this.dispose();
+			throw error;
 		}
 	}
 
@@ -1630,6 +1648,11 @@ export class SessionManager {
 	 * Returns the new session file path, or undefined if not persisting.
 	 */
 	createBranchedSession(leafId: string): string | undefined {
+		const branch = () => this.createBranchedSessionOwned(leafId);
+		return this.persist && this.sessionFile ? withSessionFileUsage(this.sessionFile, branch) : branch();
+	}
+
+	private createBranchedSessionOwned(leafId: string): string | undefined {
 		const previousSessionFile = this.sessionFile;
 		const path = this.getBranch(leafId);
 		if (path.length === 0) {
@@ -1818,6 +1841,17 @@ export class SessionManager {
 		sessionDir?: string,
 		options?: NewSessionOptions,
 	): SessionManager {
+		return withSessionFileUsage(resolvePath(sourcePath), () =>
+			SessionManager.forkFromOwned(sourcePath, targetCwd, sessionDir, options),
+		);
+	}
+
+	private static forkFromOwned(
+		sourcePath: string,
+		targetCwd: string,
+		sessionDir?: string,
+		options?: NewSessionOptions,
+	): SessionManager {
 		const resolvedSourcePath = resolvePath(sourcePath);
 		const resolvedTargetCwd = resolvePath(targetCwd);
 		const sourceEntries = loadEntriesFromFile(resolvedSourcePath);
@@ -1853,16 +1887,18 @@ export class SessionManager {
 			cwd: resolvedTargetCwd,
 			parentSession: resolvedSourcePath,
 		};
-		writeFileSync(newSessionFile, `${JSON.stringify(newHeader)}\n`, { flag: "wx" });
+		return withSessionFileUsage(newSessionFile, () => {
+			writeFileSync(newSessionFile, `${JSON.stringify(newHeader)}\n`, { flag: "wx" });
 
-		// Copy all non-header entries from source
-		for (const entry of sourceEntries) {
-			if (entry.type !== "session") {
-				appendFileSync(newSessionFile, `${JSON.stringify(entry)}\n`);
+			// Copy all non-header entries from source
+			for (const entry of sourceEntries) {
+				if (entry.type !== "session") {
+					appendFileSync(newSessionFile, `${JSON.stringify(entry)}\n`);
+				}
 			}
-		}
 
-		return new SessionManager(resolvedTargetCwd, dir, newSessionFile, true);
+			return new SessionManager(resolvedTargetCwd, dir, newSessionFile, true);
+		});
 	}
 
 	/**

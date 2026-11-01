@@ -1,6 +1,3 @@
-import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { unlink } from "node:fs/promises";
 import * as os from "node:os";
 import {
 	type Component,
@@ -14,7 +11,9 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import { KeybindingsManager } from "../../../core/keybindings.ts";
+import { deleteSessionFile } from "../../../core/session-delete.ts";
 import type { SessionInfo, SessionListProgress } from "../../../core/session-manager.ts";
+import { moveSessionHere } from "../../../core/session-move.ts";
 import { canonicalizePath as _canonicalizePath } from "../../../utils/paths.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
@@ -65,6 +64,9 @@ class SessionSelectorHeader implements Component {
 	private statusMessage: { type: "info" | "error"; message: string } | null = null;
 	private statusTimeout: ReturnType<typeof setTimeout> | null = null;
 	private showRenameHint = false;
+	public canMove: () => boolean = () => false;
+	public confirmingMove: SessionInfo | null = null;
+	public moveTarget = process.cwd();
 
 	constructor(scope: SessionScope, sortMode: SortMode, nameFilter: NameFilter, requestRender: () => void) {
 		this.scope = scope;
@@ -155,7 +157,14 @@ class SessionSelectorHeader implements Component {
 		// Build hint lines - changes based on state (all branches truncate to width)
 		let hintLine1: string;
 		let hintLine2: string;
-		if (this.confirmingDeletePath !== null) {
+		if (this.confirmingMove !== null) {
+			hintLine1 = truncateToWidth(
+				`Move session from ${shortenPath(this.confirmingMove.cwd)} to ${shortenPath(this.moveTarget)}?`,
+				width,
+				"…",
+			);
+			hintLine2 = `${keyHint("tui.select.confirm", "confirm")} · ${keyHint("tui.select.cancel", "cancel")}`;
+		} else if (this.confirmingDeletePath !== null) {
 			const confirmHint = `Delete session? ${keyHint("tui.select.confirm", "confirm")} · ${keyHint("tui.select.cancel", "cancel")}`;
 			hintLine1 = theme.fg("error", truncateToWidth(confirmHint, width, "…"));
 			hintLine2 = "";
@@ -177,6 +186,7 @@ class SessionSelectorHeader implements Component {
 			if (this.showRenameHint) {
 				hint2Parts.push(keyHint("app.session.rename", "rename"));
 			}
+			if (this.canMove()) hint2Parts.unshift(keyHint("app.session.move", "move here"));
 			const hint2 = hint2Parts.join(sep);
 			hintLine1 = truncateToWidth(hint1, width, "…");
 			hintLine2 = truncateToWidth(hint2, width, "…");
@@ -308,6 +318,21 @@ class SessionList implements Component, Focusable {
 	public onDeleteSession?: (sessionPath: string) => Promise<void>;
 	public onRenameSession?: (sessionPath: string) => void;
 	public onError?: (message: string) => void;
+	public moveTarget = process.cwd();
+	private confirmingMove: SessionInfo | null = null;
+	public moving = false;
+	public onMoveConfirmationChange?: (session: SessionInfo | null) => void;
+	public onMoveSession?: (session: SessionInfo) => Promise<void>;
+
+	canMoveSelected(): boolean {
+		const selected = this.filteredSessions[this.selectedIndex]?.session;
+		return (
+			!!selected?.cwd &&
+			!this.isCurrentSessionPath(selected.path) &&
+			canonicalizePath(selected.cwd) !== canonicalizePath(this.moveTarget)
+		);
+	}
+
 	private maxVisible: number = 10; // Max sessions visible (one line each)
 
 	// Focusable implementation - propagate to searchInput for IME cursor positioning
@@ -540,6 +565,20 @@ class SessionList implements Component, Focusable {
 	handleInput(keyData: string): void {
 		const kb = getKeybindings();
 
+		if (this.moving) return;
+		if (this.confirmingMove) {
+			if (kb.matches(keyData, "tui.select.confirm")) {
+				const selected = this.confirmingMove;
+				this.confirmingMove = null;
+				this.onMoveConfirmationChange?.(null);
+				void this.onMoveSession?.(selected);
+			} else if (kb.matches(keyData, "tui.select.cancel")) {
+				this.confirmingMove = null;
+				this.onMoveConfirmationChange?.(null);
+			}
+			return;
+		}
+
 		// Handle delete confirmation state first - intercept all keys
 		if (this.confirmingDeletePath !== null) {
 			if (kb.matches(keyData, "tui.select.confirm")) {
@@ -553,6 +592,19 @@ class SessionList implements Component, Focusable {
 				return;
 			}
 			// Ignore all other keys while confirming
+			return;
+		}
+
+		if (kb.matches(keyData, "app.session.move")) {
+			if (this.canMoveSelected()) {
+				this.confirmingMove = this.filteredSessions[this.selectedIndex]!.session;
+				this.onMoveConfirmationChange?.(this.confirmingMove);
+				return;
+			}
+			// Nothing to move here, so keep the editor binding usable in the search field.
+			// Same convention as app.session.deleteNoninvasive, which defers to the input.
+			this.searchInput.handleInput(keyData);
+			this.filterSessions(this.searchInput.getValue());
 			return;
 		}
 
@@ -649,46 +701,6 @@ class SessionList implements Component, Focusable {
 type SessionsLoader = (onProgress?: SessionListProgress, signal?: AbortSignal) => Promise<SessionInfo[]>;
 
 /**
- * Delete a session file, trying the `trash` CLI first, then falling back to unlink
- */
-async function deleteSessionFile(
-	sessionPath: string,
-): Promise<{ ok: boolean; method: "trash" | "unlink"; error?: string }> {
-	// Try `trash` first (if installed)
-	const trashArgs = sessionPath.startsWith("-") ? ["--", sessionPath] : [sessionPath];
-	const trashResult = spawnSync("trash", trashArgs, { encoding: "utf-8" });
-
-	const getTrashErrorHint = (): string | null => {
-		const parts: string[] = [];
-		if (trashResult.error) {
-			parts.push(trashResult.error.message);
-		}
-		const stderr = trashResult.stderr?.trim();
-		if (stderr) {
-			parts.push(stderr.split("\n")[0] ?? stderr);
-		}
-		if (parts.length === 0) return null;
-		return `trash: ${parts.join(" · ").slice(0, 200)}`;
-	};
-
-	// If trash reports success, or the file is gone afterwards, treat it as successful
-	if (trashResult.status === 0 || !existsSync(sessionPath)) {
-		return { ok: true, method: "trash" };
-	}
-
-	// Fallback to permanent deletion
-	try {
-		await unlink(sessionPath);
-		return { ok: true, method: "unlink" };
-	} catch (err) {
-		const unlinkError = err instanceof Error ? err.message : String(err);
-		const trashErrorHint = getTrashErrorHint();
-		const error = trashErrorHint ? `${unlinkError} (${trashErrorHint})` : unlinkError;
-		return { ok: false, method: "unlink", error };
-	}
-}
-
-/**
  * Component that renders a session selector
  */
 export class SessionSelectorComponent extends Container implements Focusable {
@@ -765,6 +777,8 @@ export class SessionSelectorComponent extends Container implements Focusable {
 			renameSession?: (sessionPath: string, currentName: string | undefined) => Promise<void>;
 			showRenameHint?: boolean;
 			keybindings?: KeybindingsManager;
+			moveTarget?: string;
+			moveSession?: (source: string, target: string) => string;
 		},
 		currentSessionFilePath?: string,
 	) {
@@ -788,6 +802,31 @@ export class SessionSelectorComponent extends Container implements Focusable {
 			this.keybindings,
 			currentSessionFilePath,
 		);
+
+		this.sessionList.moveTarget = options?.moveTarget ?? process.cwd();
+		this.header.moveTarget = this.sessionList.moveTarget;
+		this.header.canMove = () => this.sessionList.canMoveSelected();
+		this.sessionList.onMoveConfirmationChange = (session) => {
+			this.header.confirmingMove = session;
+			this.requestRender();
+		};
+		this.sessionList.onMoveSession = async (session) => {
+			this.sessionList.moving = true;
+			this.cancelLoads();
+			try {
+				(options?.moveSession ?? moveSessionHere)(session.path, this.sessionList.moveTarget);
+				await this.refreshSessionsAfterMutation();
+				this.header.setStatusMessage({ type: "info", message: "Session moved to starting directory" }, 3000);
+			} catch (error) {
+				this.header.setStatusMessage({
+					type: "error",
+					message: `Cannot move: ${error instanceof Error ? error.message : String(error)}`,
+				});
+			} finally {
+				this.sessionList.moving = false;
+				this.requestRender();
+			}
+		};
 
 		this.buildBaseLayout(this.sessionList);
 

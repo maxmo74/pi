@@ -113,6 +113,7 @@ import {
 	sessionEntryToContextMessages,
 	type UsageEntry,
 } from "../../core/session-manager.ts";
+import { getSessionOpenRefusal } from "../../core/session-ownership.ts";
 import type { FullscreenExitOutput, TuiMode } from "../../core/settings-manager.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
@@ -132,7 +133,13 @@ import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { loadAllHighlightLanguages } from "../../utils/syntax-highlight.ts";
 import { ensureTool, type ToolStatus } from "../../utils/tools-manager.ts";
-import { checkForNewPiVersion, type LatestPiRelease } from "../../utils/version-check.ts";
+import {
+	type ForkUpdateStatus,
+	formatUpstreamAheadNotice,
+	formatUpstreamAheadTitle,
+	getForkUpdateStatus,
+	type LatestPiRelease,
+} from "../../utils/version-check.ts";
 import { reportBug } from "./bug-report.ts";
 import { createChatViewport } from "./chat-viewport.ts";
 import { ArminComponent } from "./components/armin.ts";
@@ -1158,9 +1165,11 @@ export class InteractiveMode {
 		}
 
 		// Start version check asynchronously
-		checkForNewPiVersion(this.version).then((newRelease) => {
-			if (newRelease) {
-				this.showNewVersionNotification(newRelease);
+		void getForkUpdateStatus(this.version).then((status: ForkUpdateStatus) => {
+			if (status.kind === "patched-update") {
+				this.showNewVersionNotification(status.release);
+			} else if (status.kind === "upstream-ahead") {
+				this.showForkBehindNotification(status.upstreamVersion);
 			}
 		});
 
@@ -4633,6 +4642,19 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
+	showForkBehindNotification(upstreamVersion: string): void {
+		const title = formatUpstreamAheadTitle(upstreamVersion);
+		const notice = formatUpstreamAheadNotice(this.version, upstreamVersion);
+
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("warning", text)));
+		this.chatContainer.addChild(
+			new ThemedText(() => `${theme.bold(theme.fg("warning", title))}\n${theme.fg("muted", notice)}`, 1, 0),
+		);
+		this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("warning", text)));
+		this.ui.requestRender();
+	}
+
 	showPackageUpdateNotification(packages: string[]): void {
 		const updateInstruction = () =>
 			theme.fg("muted", "Package updates are available. Run ") +
@@ -5709,7 +5731,13 @@ export class InteractiveMode {
 						const next = (nextName ?? "").trim();
 						if (!next) return;
 						const mgr = SessionManager.open(sessionFilePath);
-						mgr.appendSessionInfo(next);
+						try {
+							mgr.appendSessionInfo(next);
+						} finally {
+							// The picker keeps its own reference; releasing here stops the rename from
+							// keeping the session owned for the rest of the process.
+							mgr.dispose();
+						}
 					},
 					showRenameHint: true,
 					keybindings: this.keybindings,
@@ -5726,6 +5754,13 @@ export class InteractiveMode {
 		options?: Parameters<ExtensionCommandContext["switchSession"]>[1],
 	): Promise<{ cancelled: boolean }> {
 		this.clearStatusIndicator();
+		// Refusing here keeps the current session alive. Letting the runtime throw would be handled
+		// as a failed resume, which is not what a refused choice means.
+		const refusal = getSessionOpenRefusal(sessionPath);
+		if (refusal) {
+			this.showWarning(refusal);
+			return { cancelled: true };
+		}
 		try {
 			const result = await this.runtimeHost.switchSession(sessionPath, {
 				withSession: options?.withSession,

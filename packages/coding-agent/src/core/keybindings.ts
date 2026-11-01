@@ -108,6 +108,10 @@ const APP_KEYBINDINGS = {
 		defaultKeys: "ctrl+r",
 		description: "Rename session",
 	},
+	"app.session.move": {
+		defaultKeys: "ctrl+y",
+		description: "Move selected session to the starting directory",
+	},
 	"app.session.delete": {
 		defaultKeys: "ctrl+d",
 		description: "Delete session",
