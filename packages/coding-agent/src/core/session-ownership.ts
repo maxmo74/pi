@@ -155,18 +155,54 @@ function processIsLive(pid: number): boolean {
 	}
 }
 
-/** Reject live users and, on Linux, untracked Pi processes. Caller must hold the ownership gate. */
+/** Refuse live users of this file and, on Linux, untracked Pi processes. Caller must hold the ownership gate. */
 export function assertSessionUnused(path: string): void {
 	const canonical = canonicalSessionPath(path);
 	const owners = collectLiveOwners();
-	for (const owner of owners) {
-		if (owner.sessions.includes(canonical))
-			throw new Error(`Session is open in process ${owner.pid}. Close it before moving.`);
-	}
+	refuseWhileOpen(owners, canonical, "moving");
+	// Relocation splits a session across two paths if any process keeps the old one open, including
+	// a process that cannot be inspected, so an untracked Pi blocks a move with no override.
 	// Detecting Pi processes that predate ownership requires scanning the process table, and the
 	// portable process list is not reliable enough to do so outside Linux. Those platforms only
 	// enforce ownership registered by cooperating Pi instances.
-	if (process.platform !== "linux") return;
+	const untracked = findUntrackedPiPid(owners);
+	if (untracked !== undefined)
+		throw new Error(
+			`Pi process ${untracked} does not report session ownership. Close older Pi instances before moving.`,
+		);
+}
+
+/**
+ * Refuse a delete where the harm is proven, and allow an override where it is only possible. A live
+ * process that registered this file always blocks it, with or without the override: deleting a session
+ * out from under its writer is the same loss as forking its history. An untracked Pi cannot be
+ * inspected at all, so it blocks too, but `PI_ALLOW_SHARED_SESSION` clears that case. Without the
+ * override, one unrelated official Pi on Linux would make session cleanup impossible, and the worst
+ * outcome it prevents is a process writing to a removed file rather than lost conversation.
+ * Caller must hold the ownership gate.
+ */
+export function assertSessionDeletable(path: string): void {
+	const canonical = canonicalSessionPath(path);
+	const owners = collectLiveOwners();
+	refuseWhileOpen(owners, canonical, "deleting");
+	if (process.env.PI_ALLOW_SHARED_SESSION) return;
+	const untracked = findUntrackedPiPid(owners);
+	if (untracked !== undefined)
+		throw new Error(
+			`Pi process ${untracked} does not report session ownership, so it may hold this session. Close it, or set PI_ALLOW_SHARED_SESSION to delete anyway.`,
+		);
+}
+
+function refuseWhileOpen(owners: LiveOwner[], canonical: string, purpose: string): void {
+	for (const owner of owners) {
+		if (owner.sessions.includes(canonical))
+			throw new Error(`Session is open in process ${owner.pid}. Close it before ${purpose}.`);
+	}
+}
+
+/** First Pi process of this user that runs without an ownership record, if any. Linux only. */
+function findUntrackedPiPid(owners: LiveOwner[]): number | undefined {
+	if (process.platform !== "linux") return undefined;
 	const registered = new Set(owners.map((owner) => owner.pid));
 	const processes = execFileSync("ps", ["-u", String(process.getuid!()), "-o", "pid=,comm=,args="], {
 		encoding: "utf8",
@@ -181,11 +217,9 @@ export function assertSessionUnused(path: string): void {
 			/(?:^|\s)\S*(?:pi-coding-agent\/(?:dist|src)\/cli\.(?:js|ts)|\/pi\/packages\/coding-agent\/src\/cli\.ts)(?:\s|$)/.test(
 				match[3],
 			);
-		if (isPi)
-			throw new Error(
-				`Pi process ${pid} does not report session ownership. Close older Pi instances before moving.`,
-			);
+		if (isPi) return pid;
 	}
+	return undefined;
 }
 
 /**

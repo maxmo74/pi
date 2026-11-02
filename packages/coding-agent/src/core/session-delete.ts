@@ -1,7 +1,7 @@
 // Delete inactive sessions under the same gate used by relocation and ownership registration.
 import { spawnSync } from "node:child_process";
 import { existsSync, unlinkSync } from "node:fs";
-import { assertSessionUnused, withSessionOwnershipGate } from "./session-ownership.ts";
+import { assertSessionDeletable, withSessionOwnershipGate } from "./session-ownership.ts";
 
 export interface SessionDeleteResult {
 	ok: boolean;
@@ -9,11 +9,11 @@ export interface SessionDeleteResult {
 	error?: string;
 }
 
-/** Prefer trash, retaining the existing unlink fallback; refuse active or untracked owners. */
+/** Prefer trash, retaining the existing unlink fallback; refuse sessions a live process holds. */
 export function deleteSessionFile(sessionPath: string): SessionDeleteResult {
 	try {
 		return withSessionOwnershipGate(() => {
-			assertSessionUnused(sessionPath);
+			assertSessionDeletable(sessionPath);
 			return removeSessionFile(sessionPath);
 		});
 	} catch (error) {

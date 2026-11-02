@@ -30,6 +30,7 @@ describe("coordinated session deletion", () => {
 		vi.mocked(childProcess.spawnSync).mockReturnValue(unavailableTrash);
 	});
 	afterEach(() => {
+		delete process.env.PI_ALLOW_SHARED_SESSION;
 		vi.resetAllMocks();
 		rmSync(root, { recursive: true, force: true });
 	});
@@ -74,5 +75,37 @@ describe("coordinated session deletion", () => {
 			error: expect.stringContaining("does not report session ownership"),
 		});
 		expect(existsSync(source)).toBe(true);
+	});
+
+	// An untracked Pi is a possibility, not a fact: one official Pi elsewhere must not make cleanup
+	// impossible, so the override clears the delete refusal.
+	it.skipIf(process.platform !== "linux")(
+		"lets PI_ALLOW_SHARED_SESSION override an untracked Pi on a delete, naming the override in the refusal",
+		() => {
+			vi.mocked(childProcess.execFileSync).mockReturnValue("999999 pi pi\n");
+			expect(deleteSessionFile(source)).toMatchObject({ error: expect.stringContaining("PI_ALLOW_SHARED_SESSION") });
+			process.env.PI_ALLOW_SHARED_SESSION = "1";
+			expect(deleteSessionFile(source)).toEqual({ ok: true, method: "unlink" });
+			expect(existsSync(source)).toBe(false);
+		},
+	);
+
+	// Relocation can split a session across two paths, so the override never clears it there.
+	it.skipIf(process.platform !== "linux")("PI_ALLOW_SHARED_SESSION does not clear an untracked Pi on a move", () => {
+		vi.mocked(childProcess.execFileSync).mockReturnValue("999999 pi pi\n");
+		process.env.PI_ALLOW_SHARED_SESSION = "1";
+		expect(() => moveSessionHere(source, target, root)).toThrow("does not report session ownership");
+		expect(existsSync(source)).toBe(true);
+	});
+
+	it("PI_ALLOW_SHARED_SESSION does not delete a session a live process registered", () => {
+		const manager = SessionManager.open(source);
+		try {
+			process.env.PI_ALLOW_SHARED_SESSION = "1";
+			expect(deleteSessionFile(source)).toMatchObject({ error: expect.stringContaining("open in process") });
+			expect(existsSync(source)).toBe(true);
+		} finally {
+			manager.dispose();
+		}
 	});
 });
