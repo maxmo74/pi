@@ -1,10 +1,14 @@
-# Draft issue: resuming one session in two pi processes forks its history
+# #11684: resuming one session in two pi processes forks its history (closed `no-action`)
 
-**Status: not filed. Do not file until the Linux verification below passes.** This file exists so that
-any machine with this checkout - and the AI working on it - has the whole picture in one place.
+**Status: filed as [#11684](https://github.com/earendil-works/pi/issues/11684) on 2026-11-02, auto-closed by the
+new-contributor bot in 10 seconds, then labelled `no-action` by `badlogic`. Do not re-file, do not comment
+asking for reconsideration, do not ask for `lgtm` on it.** Kept because it is the record of a defect the
+maintainer has now seen and declined, and because the fork-side guard is the only implementation that
+protects anyone.
 
-Whoever continues this: read the whole file before touching the draft. The prior-art section is the
-reason this has not been filed yet, and the rules section is how previous attempts died.
+Whoever continues this: the work here is maintaining the guard in this fork and documenting why upstream
+won't take it. The filing rules below are kept as history, including where they were right and where this
+file was wrong.
 
 ## The defect, in one paragraph
 
@@ -22,6 +26,11 @@ file, so one branch becomes unreachable: gone from the transcript, from the mode
 | `v1.4.0` (upstream release tag) | `node scripts/probe-double-writer.mjs packages/coding-agent/src/core/session-manager.ts` | reproduced |
 | `upstream/main` @ `b556cfe5b` (well past 1.4.0) | same probe on a worktree of the tip | reproduced, identical trace |
 | our published `1.4.0-max.2`, `max.3` and `max.4` | same probe against `dist/core/session-manager.js` | reproduced, identical trace |
+| official `1.4.0` CLI, Linux | two real CLI processes on one session, extensions disabled, Oracle Linux 9.5 / Node 22.23.2 | reproduced |
+| official `1.4.0` CLI, macOS | same sequence in two terminals | reproduced |
+
+The two-platform CLI confirmation is what #11684 submitted, in the reporter's own words rather than the
+draft below. The probe's own trace was quoted in a follow-up comment.
 
 Canonical trace, produced by the probe:
 
@@ -44,10 +53,13 @@ Nothing in `packages/coding-agent/docs` states that a session file may only be w
 The only place such a rule is written down anywhere in the repo is `packages/durable/README.md` ("One
 process owns a storage at a time; there is no cross-process locking"), which is a different package.
 
-## Verification still needed, on Linux
+## Verification on Linux (done, 2026-11-02)
 
-Required because one prior report says "still present in 1.0.3 on Linux" and we want a second
-independent confirmation before filing, on a machine that shares nothing with this one.
+Done: reproduced with two unmodified official 1.4.0 CLI processes, extensions disabled, and again on
+macOS. Kept here because a third machine is still the cheapest way to re-confirm after an upstream
+change. The reason it was required at all: one prior report says "still present in 1.0.3 on Linux" and a
+second independent confirmation, on a machine sharing nothing with this one, was worth having before
+filing.
 
 ```
 git clone -b release/v1.4.0 https://github.com/maxmo74/pi.git
@@ -77,9 +89,12 @@ reproduce on Linux, stop and report that, do not file.
 | [#8300](https://github.com/earendil-works/pi/issues/8300) | our exact bug, with `pi -c` repro and a lock design | bot-closed 9 seconds after filing |
 | [#8848](https://github.com/earendil-works/pi/issues/8848) | same, from an RPC desktop shell | bot-closed in 9 seconds |
 | [#8852](https://github.com/earendil-works/pi/issues/8852) | in-process double open, duplicate seq | bot-closed; author rewrote to meet the bar |
+| [#11684](https://github.com/earendil-works/pi/issues/11684) | ours: repro on official 1.4.0 in two terminals on Linux and macOS, prior art linked, template labels set | bot-closed in 10 seconds; then `no-action` applied by `badlogic`, i.e. reviewed in the daily pass and declined |
 
-Every closure is the new-contributor auto-close bot, with `no-action` / `NOT_PLANNED`. No maintainer has
-responded to any of them, so there is no rejection to argue with, and no open issue tracks this.
+The first four carry `no-action` applied by `github-actions[bot]` during auto-close, with no human
+involvement at all. #11684 is the only one where the label came from a person: every closure before it was
+the new-contributor auto-close bot, and no maintainer had responded to any of them until this one was
+read and declined. So there is now a rejection to argue with, and arguing with it is not on the table.
 Fix PR #8333 ("enforce session writer ownership") was bot-closed because only `lgtm`-approved
 contributors may open PRs; the author later asked for approval on #8848 and never got it.
 
@@ -123,13 +138,20 @@ a maintainer asks.
 3. Expect a bot close within seconds regardless of quality: our account is new. The realistic target is
    the daily review of auto-closed issues, so the body must stand alone and be reopenable on sight.
    A maintainer replying `lgtmi` keeps later issues open; nothing in our control forces that.
+   Outcome on #11684: closed in 10 seconds, reviewed in the daily pass, declined with `no-action`. Meeting
+   the bar bought a human reading, not a reopen.
 4. Also leave a short comment on #8300 pointing at the new issue, since the loss report lives there.
 5. Repro must be executable with plain `pi` and no extensions, no fork, no model spend for the probe
    variant.
 6. Do not relitigate #11583 (session moves). Different topic, already closed, and reopening it is the
    fastest way to lose the account.
+7. After a `no-action` applied by a person, stop. No comment, no `lgtm` request, no second issue. The
+   decision is recorded, the account has two of them, and a third disagreement reads as not hearing it.
 
 ## Draft body (upstream's bug template)
+
+Superseded: what was submitted is the reporter's own, simpler wording, and the protocol questions below
+were written before filing.
 
 ### What happened?
 
