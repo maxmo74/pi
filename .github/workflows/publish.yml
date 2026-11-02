@@ -28,7 +28,10 @@ permissions: {}
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    # Pinned, not `ubuntu-latest`: that label moves between Ubuntu majors without asking, which
+    # changes the glibc, procps and npm a published artifact was built and tested on. The build step
+    # prints the release so a provenance question has a log line to answer it.
+    runs-on: ubuntu-24.04
     # Two publishes at once would race on the next free revision and on the pointer branch.
     concurrency:
       group: publish-patched
@@ -85,6 +88,13 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
+
+      - name: Record the build host
+        run: |
+          set -euo pipefail
+          grep -E "^(PRETTY_NAME|VERSION_ID)=" /etc/os-release
+          node --version
+          npm --version
 
       - name: Build
         run: npm run build
@@ -173,3 +183,39 @@ jobs:
           echo "::error::$url is not serving $VERSION yet:"
           printf '%s\n' "$body"
           exit 1
+
+  # The untracked-process branch of the ownership guard is Linux-only, and it is the one refusal an
+  # install on a server can hit without any Pi of this fork running. This job runs the tests that
+  # cover it on RHEL-family userspace, which is what those servers actually run; the Ubuntu job above
+  # proves the logic on the Debian family, and this one says the process scan behaves the same on the
+  # other packaging of the same kernel interfaces. It publishes nothing and holds no permissions.
+  # A container job still executes on the pinned GitHub runner, so this needs no self-hosted runner.
+  ownership-rhel9:
+    runs-on: ubuntu-24.04
+    container:
+      image: registry.access.redhat.com/ubi9/nodejs-22:latest
+      options: --user root
+    permissions: {}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Record the image
+        run: grep -E "^(PRETTY_NAME|VERSION_ID)=" /etc/os-release
+
+      # UBI images carry no git, which npm needs for any dependency it fetches as a repository.
+      - name: Install system dependencies
+        run: dnf -y install git procps-ng >/dev/null
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      # Only this file, deliberately. The other ownership tests fork a TypeScript fixture and so
+      # depend on the Node build in the image supporting type stripping, which the UBI module stream
+      # does not promise; this one runs the guard with the process table mocked and needs nothing
+      # but the workspace's own dependencies.
+      - name: Run the Linux-only ownership tests
+        working-directory: packages/coding-agent
+        run: |
+          set -euo pipefail
+          export PI_CODING_AGENT_DIR=$(mktemp -d)
+          ../../node_modules/.bin/vitest --run test/session-delete.test.ts
