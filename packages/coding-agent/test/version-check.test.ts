@@ -2,14 +2,27 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	checkForNewPiVersion,
 	comparePackageVersions,
+	forkBaseVersion,
+	formatUpstreamAheadNotice,
+	formatUpstreamAheadTitle,
 	formatVersionCheckError,
+	getForkUpdateStatus,
 	getLatestPiRelease,
 	getLatestPiVersion,
 	isNewerPackageVersion,
+	upstreamVersionAhead,
 } from "../src/utils/version-check.ts";
 import { allowNetwork } from "./test-network-env.ts";
 
 const originalSkipVersionCheck = process.env.PI_SKIP_VERSION_CHECK;
+const forkReleaseUrl = "https://raw.githubusercontent.com/maxmo74/pi/update-info/patch/update-info.json";
+
+// Answer the fork endpoint and the upstream endpoint differently, the way a stale fork looks live.
+function stubReleases(fork: unknown, upstream: unknown) {
+	const fetchMock = vi.fn(async (url: string) => Response.json(url.endsWith("update-info.json") ? fork : upstream));
+	vi.stubGlobal("fetch", fetchMock);
+	return fetchMock;
+}
 
 beforeEach(() => {
 	allowNetwork();
@@ -42,13 +55,13 @@ describe("version checks", () => {
 		await expect(checkForNewPiVersion("1.2.2")).resolves.toEqual({ version: "1.2.3" });
 	});
 
-	it("uses the pi.dev version check api with a pi user agent", async () => {
+	it("uses the fork release asset with a pi user agent", async () => {
 		const fetchMock = vi.fn(async () => Response.json({ version: "1.2.4" }));
 		vi.stubGlobal("fetch", fetchMock);
 
 		await expect(getLatestPiVersion("1.2.3")).resolves.toBe("1.2.4");
 		expect(fetchMock).toHaveBeenCalledWith(
-			"https://pi.dev/api/latest-version",
+			forkReleaseUrl,
 			expect.objectContaining({
 				headers: expect.objectContaining({
 					"User-Agent": expect.stringMatching(/^pi\/1\.2\.3 /),
@@ -127,5 +140,97 @@ describe("version checks", () => {
 
 		await expect(getLatestPiVersion("1.2.3")).resolves.toBe("1.2.4");
 		expect(fetchMock).toHaveBeenCalledOnce();
+	});
+});
+
+describe("fork update status", () => {
+	beforeEach(() => {
+		allowNetwork();
+	});
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		if (originalSkipVersionCheck === undefined) delete process.env.PI_SKIP_VERSION_CHECK;
+	});
+
+	it("strips this fork's revision suffix", () => {
+		expect(forkBaseVersion("1.4.0-max.2")).toBe("1.4.0");
+		expect(forkBaseVersion("1.4.0")).toBe("1.4.0");
+	});
+
+	it("offers a patched build whenever the fork published one", async () => {
+		stubReleases({ packageName: "@maxmo74/pi-coding-agent", version: "1.4.0-max.1" }, { version: "1.4.0" });
+
+		await expect(getForkUpdateStatus("1.4.0-max.0")).resolves.toEqual({
+			kind: "patched-update",
+			release: { packageName: "@maxmo74/pi-coding-agent", version: "1.4.0-max.1" },
+		});
+	});
+
+	it("names the upstream release when the fork still owes a rebuild", async () => {
+		stubReleases({ packageName: "@maxmo74/pi-coding-agent", version: "1.4.0-max.0" }, { version: "1.5.0" });
+
+		await expect(getForkUpdateStatus("1.4.0-max.0")).resolves.toEqual({
+			kind: "upstream-ahead",
+			upstreamVersion: "1.5.0",
+		});
+	});
+
+	it("stays quiet while the fork matches upstream", async () => {
+		stubReleases({ packageName: "@maxmo74/pi-coding-agent", version: "1.4.0-max.3" }, { version: "1.4.0" });
+
+		await expect(getForkUpdateStatus("1.4.0-max.3")).resolves.toEqual({ kind: "current" });
+	});
+
+	it("treats unreachable endpoints as nothing to report", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => new Response(null, { status: 503 })),
+		);
+
+		await expect(getForkUpdateStatus("1.4.0-max.0")).resolves.toEqual({ kind: "current" });
+	});
+
+	// A rejected request must not escape: this runs unhandled at startup and inside `pi update`.
+	it("swallows a failing endpoint instead of rejecting", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => {
+				throw new Error("fetch failed");
+			}),
+		);
+
+		await expect(getForkUpdateStatus("1.4.0-max.0")).resolves.toEqual({ kind: "current" });
+	});
+
+	it("only reports upstream ahead when upstream passes the fork's base version", () => {
+		expect(upstreamVersionAhead("1.4.0-max.3", { version: "1.4.0" })).toBeUndefined();
+		expect(upstreamVersionAhead("1.4.0-max.3", { version: "1.4.1" })).toBe("1.4.1");
+		expect(upstreamVersionAhead("1.4.0-max.3", { version: "1.3.9" })).toBeUndefined();
+		expect(upstreamVersionAhead("1.4.0-max.3", undefined)).toBeUndefined();
+	});
+
+	it("asks both endpoints exactly once", async () => {
+		const fetchMock = stubReleases({ version: "1.4.0-max.0" }, { version: "1.5.0" });
+
+		await getForkUpdateStatus("1.4.0-max.0");
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+	});
+
+	it("asks nothing when version checks are disabled", async () => {
+		process.env.PI_SKIP_VERSION_CHECK = "1";
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(getForkUpdateStatus("1.4.0-max.0")).resolves.toEqual({ kind: "current" });
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it("keeps the nudge to the two versions", () => {
+		expect(formatUpstreamAheadTitle("1.5.0")).toBe("New pi 1.5.0 released - maxmo74 reviewing it. Or napping...");
+
+		const notice = formatUpstreamAheadNotice("1.4.0-max.2", "1.5.0");
+		expect(notice).toBe('Your build is 1.4.0-max.2; "pi update" waits for 1.5.0-max.0.');
+		// The notice must not read like an installable upgrade.
+		expect(notice).toContain("waits for");
 	});
 });

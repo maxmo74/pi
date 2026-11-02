@@ -100,7 +100,9 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 			"fetch",
 			vi.fn(async (input: string | URL | Request) => {
 				const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-				if (url === "https://pi.dev/api/latest-version") {
+				// Fork build: update checks go to the fork's release asset; pi.dev answers too because a
+				// fork build asks whether upstream moved ahead of the patched release.
+				if (url === "https://pi.dev/api/latest-version" || url.endsWith("/update-info.json")) {
 					return Response.json({ packageName: PACKAGE_NAME, version: targetVersion });
 				}
 				const releaseUrl = `https://example.test/api/installer/releases/${targetVersion}`;
@@ -629,7 +631,8 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 		try {
 			await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
 
-			expect(fetchMock).toHaveBeenCalledOnce();
+			// One request for the fork release, one for pi.dev, which is what an explicit check asks for.
+			expect(fetchMock).toHaveBeenCalledTimes(2);
 			expect(logSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
 				`pi is already up to date (v${VERSION})`,
 			);
@@ -658,7 +661,8 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 
 		try {
 			await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
-			expect(fetchMock).toHaveBeenCalledTimes(3);
+			// Three attempts for the fork release, then one pi.dev request while reporting "up to date".
+			expect(fetchMock).toHaveBeenCalledTimes(4);
 			expect(errorSpy).not.toHaveBeenCalled();
 		} finally {
 			if (previousSkipVersionCheck === undefined) delete process.env.PI_SKIP_VERSION_CHECK;

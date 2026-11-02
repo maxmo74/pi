@@ -1,8 +1,8 @@
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-ai/compat";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	type CreateAgentSessionRuntimeFactory,
 	createAgentSessionFromServices,
@@ -30,6 +30,7 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 	const cleanups: Array<() => Promise<void> | void> = [];
 
 	afterEach(async () => {
+		vi.restoreAllMocks();
 		while (cleanups.length > 0) {
 			await cleanups.pop()?.();
 		}
@@ -78,7 +79,11 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 				noThemes: true,
 			},
 		};
+		let rejectCreation = false;
+		const candidates: SessionManager[] = [];
 		const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionManager, sessionStartEvent }) => {
+			candidates.push(sessionManager);
+			if (rejectCreation) throw new Error("Runtime creation failed for test");
 			const services = await createAgentSessionServices({
 				...runtimeOptions,
 				cwd,
@@ -97,7 +102,7 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 		const runtimeHost = await createAgentSessionRuntime(createRuntime, {
 			cwd: tempDir,
 			agentDir: tempDir,
-			sessionManager: SessionManager.create(tempDir),
+			sessionManager: SessionManager.create(tempDir, join(tempDir, "sessions")),
 		});
 		await runtimeHost.session.bindExtensions({});
 
@@ -109,8 +114,77 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 			}
 		});
 
-		return { runtimeHost, faux };
+		return {
+			runtimeHost,
+			faux,
+			tempDir,
+			candidates,
+			failCreation: () => {
+				rejectCreation = true;
+			},
+		};
 	}
+
+	it("releases a candidate rejected for a missing cwd without releasing the active session", async () => {
+		const { runtimeHost, tempDir } = await createRuntimeHost(() => {});
+		const path = join(tempDir, "missing-cwd.jsonl");
+		writeFileSync(
+			path,
+			`${JSON.stringify({ type: "session", version: 3, id: "missing", cwd: join(tempDir, "missing") })}\n`,
+		);
+		const outgoing = runtimeHost.session.sessionManager;
+		const outgoingPath = outgoing.getSessionFile();
+		const open = vi.spyOn(SessionManager, "open");
+		await expect(runtimeHost.switchSession(path)).rejects.toThrow();
+		expect(open.mock.results[0].value.getSessionFile()).toBeUndefined();
+		expect(runtimeHost.session.sessionManager).toBe(outgoing);
+		expect(outgoing.getSessionFile()).toBe(outgoingPath);
+	});
+
+	it("releases an imported candidate rejected for a missing cwd", async () => {
+		const { runtimeHost, tempDir } = await createRuntimeHost(() => {});
+		const path = join(tempDir, "import.jsonl");
+		writeFileSync(
+			path,
+			`${JSON.stringify({ type: "session", version: 3, id: "import", cwd: join(tempDir, "missing") })}\n`,
+		);
+		const open = vi.spyOn(SessionManager, "open");
+		await expect(runtimeHost.importFromJsonl(path)).rejects.toThrow();
+		expect(open.mock.results[0].value.getSessionFile()).toBeUndefined();
+	});
+
+	it.each(["new", "resume", "fork"])(
+		"releases a candidate when replacement creation fails (%s)",
+		async (operation) => {
+			const { runtimeHost, tempDir, candidates, failCreation } = await createRuntimeHost(() => {});
+			await runtimeHost.session.prompt("disposable test message");
+			failCreation();
+			if (operation === "new") {
+				await expect(runtimeHost.newSession()).rejects.toThrow("Runtime creation failed for test");
+			} else if (operation === "resume") {
+				const path = join(tempDir, "resume.jsonl");
+				writeFileSync(path, `${JSON.stringify({ type: "session", version: 3, id: "resume", cwd: tempDir })}\n`);
+				await expect(runtimeHost.switchSession(path)).rejects.toThrow("Runtime creation failed for test");
+			} else {
+				const entry = runtimeHost.session.getUserMessagesForForking()[0];
+				await expect(runtimeHost.fork(entry.entryId, { position: "at" })).rejects.toThrow(
+					"Runtime creation failed for test",
+				);
+			}
+			expect(candidates.at(-1)?.getSessionFile()).toBeUndefined();
+		},
+	);
+
+	it("retains the installed manager when UI rebinding fails", async () => {
+		const { runtimeHost, candidates } = await createRuntimeHost(() => {});
+		runtimeHost.setRebindSession(async () => {
+			throw new Error("UI failed");
+		});
+		await expect(runtimeHost.newSession()).rejects.toThrow("UI failed");
+		expect(runtimeHost.session.sessionManager).toBe(candidates.at(-1));
+		expect(runtimeHost.session.sessionManager.getSessionFile()).toBeTruthy();
+		runtimeHost.setRebindSession(undefined);
+	});
 
 	it("emits session_before_switch and session_start for new and resume flows", async () => {
 		const events: RecordedSessionEvent[] = [];

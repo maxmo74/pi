@@ -57,6 +57,7 @@ import {
 	type SessionCwdIssue,
 } from "./core/session-cwd.ts";
 import { assertValidSessionId, SessionManager } from "./core/session-manager.ts";
+import { getSessionOpenRefusal } from "./core/session-ownership.ts";
 import { collectSettingsDiagnostics, deduplicateDiagnostics } from "./core/settings-diagnostics.ts";
 import { SettingsManager } from "./core/settings-manager.ts";
 import { printTimings, resetTimings, time } from "./core/timings.ts";
@@ -336,6 +337,11 @@ function validateSessionIdFlags(parsed: Args): void {
 }
 
 function openSessionOrExit(path: string, sessionDir?: string): SessionManager {
+	const refusal = getSessionOpenRefusal(path);
+	if (refusal) {
+		console.error(chalk.red(`Error: ${refusal}`));
+		process.exit(1);
+	}
 	try {
 		return SessionManager.open(path, sessionDir);
 	} catch (error: unknown) {
@@ -343,6 +349,18 @@ function openSessionOrExit(path: string, sessionDir?: string): SessionManager {
 		console.error(chalk.red(`Error: ${message}`));
 		process.exit(1);
 	}
+}
+
+/** --continue picks the session file itself, so its shared-session check can only run afterwards. */
+function refuseSharedSessionOrExit(sessionManager: SessionManager): SessionManager {
+	const sessionFile = sessionManager.getSessionFile();
+	const refusal = sessionFile ? getSessionOpenRefusal(sessionFile) : undefined;
+	if (refusal) {
+		sessionManager.dispose();
+		console.error(chalk.red(`Error: ${refusal}`));
+		process.exit(1);
+	}
+	return sessionManager;
 }
 
 function forkSessionOrExit(sourcePath: string, cwd: string, sessionDir?: string, sessionId?: string): SessionManager {
@@ -423,20 +441,20 @@ export async function createSessionManager(
 				console.log(chalk.dim("No session selected"));
 				process.exit(0);
 			}
-			return SessionManager.open(selectedPath, sessionDir);
+			return openSessionOrExit(selectedPath, sessionDir);
 		} finally {
 			stopThemeWatcher();
 		}
 	}
 
 	if (parsed.continue) {
-		return SessionManager.continueRecent(cwd, sessionDir);
+		return refuseSharedSessionOrExit(SessionManager.continueRecent(cwd, sessionDir));
 	}
 
 	if (parsed.sessionId) {
 		const existingSession = findLocalSessionByExactId(parsed.sessionId, cwd, sessionDir);
 		if (existingSession) {
-			return SessionManager.open(existingSession.path, sessionDir);
+			return openSessionOrExit(existingSession.path, sessionDir);
 		}
 		console.error(
 			chalk.yellow(

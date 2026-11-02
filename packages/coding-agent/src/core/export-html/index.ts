@@ -295,15 +295,21 @@ export async function exportFromFile(inputPath: string, options?: ExportOptions 
 		throw new Error(`File not found: ${resolvedInputPath}`);
 	}
 
-	const sm = SessionManager.open(resolvedInputPath);
-
-	const sessionData: SessionData = {
-		header: sm.getHeader(),
-		entries: sm.getEntries(),
-		leafId: sm.getLeafId(),
-		systemPrompt: undefined,
-		tools: undefined,
-	};
+	const sessionData: SessionData = (() => {
+		const sm = SessionManager.open(resolvedInputPath);
+		try {
+			return {
+				header: sm.getHeader(),
+				entries: sm.getEntries(),
+				leafId: sm.getLeafId(),
+				systemPrompt: undefined,
+				tools: undefined,
+			};
+		} finally {
+			// Reading is done: release ownership so an export does not block relocation.
+			sm.dispose();
+		}
+	})();
 
 	const html = generateHtml(sessionData, opts.themeName);
 
