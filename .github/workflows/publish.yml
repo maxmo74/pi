@@ -163,8 +163,10 @@ jobs:
           fi
           git push origin "$commit:refs/heads/update-info"
 
-      # raw.githubusercontent.com caches for a few minutes, so poll rather than let an install read
-      # the stale pointer right after a publish that already announced the new version.
+      # raw.githubusercontent.com answers with `cache-control: max-age=300`, so the old pointer can
+      # be served for five minutes after the push lands. `1.5.0-max.2` proved the previous two-minute
+      # budget was too short: the push succeeded and this step still saw the old version. Poll past
+      # the full max-age rather than guessing the CDN will be fresh.
       - name: Verify the pointer
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -172,7 +174,7 @@ jobs:
           set -euo pipefail
           url=https://raw.githubusercontent.com/$GITHUB_REPOSITORY/update-info/patch/update-info.json
           body=
-          for attempt in 1 2 3 4 5 6; do
+          for attempt in $(seq 1 20); do
             body=$(curl -sf "$url" || true)
             if grep -q "\"version\": \"$VERSION\"" <<< "$body"; then
               printf '%s\n' "$body"
@@ -180,7 +182,7 @@ jobs:
             fi
             sleep 20
           done
-          echo "::error::$url is not serving $VERSION yet:"
+          echo "::error::$url is not serving $VERSION after 6m40s:"
           printf '%s\n' "$body"
           exit 1
 
@@ -209,10 +211,15 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
 
-      # Only this file, deliberately. The other ownership tests fork a TypeScript fixture and so
-      # depend on the Node build in the image supporting type stripping, which the UBI module stream
-      # does not promise; this one runs the guard with the process table mocked and needs nothing
-      # but the workspace's own dependencies.
+      # The build is not optional here: session-manager.ts imports values from @earendil-works/pi-ai,
+      # which imports @earendil-works/pi-schema, and those packages resolve to their dist/ output.
+      # Running the test without a build fails with "Failed to resolve entry for package
+      # '@earendil-works/pi-schema'", which is what the first run of this job did.
+      - name: Build
+        run: npm run build
+
+      # Only this file. The other ownership tests fork a TypeScript fixture and so depend on the Node
+      # build in the image supporting type stripping, which the UBI module stream does not promise.
       - name: Run the Linux-only ownership tests
         working-directory: packages/coding-agent
         run: |
