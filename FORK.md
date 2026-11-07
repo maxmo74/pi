@@ -179,6 +179,17 @@ git fetch origin update-info:refs/remotes/origin/update-info
 
 ## Testing
 
+Upstream's bar is `npm run check` and `./test.sh`, both clean. `./test.sh` cannot complete in this checkout: it builds
+`packages/env`'s daemons, which needs a Rust toolchain that is not installed here. That is not a fork defect -- nothing
+in our diff reaches `packages/env` -- but it means the standing bar here is **`npm run check` plus the coding-agent
+package suite**, run from `packages/coding-agent` with a scratch profile, which is also what `publish.yml` gates a
+release on:
+
+```
+npm run check
+PI_CODING_AGENT_DIR=$(mktemp -d) node "$(git rev-parse --show-toplevel)/node_modules/vitest/dist/cli.js" --run
+```
+
 The coding-agent suite writes real session files into the sessions directory of the **real** agent profile, one
 project directory per test working directory: `getAgentDir()/sessions/<cwd escaped>`. A full run leaves about fifty
 `--var-folders-...` entries in `~/.pi/agent/sessions`, and the `/resume` picker's other-directories tab lists every
