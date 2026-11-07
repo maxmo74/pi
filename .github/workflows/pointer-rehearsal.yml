@@ -1,0 +1,41 @@
+# Rehearses the pointer push that `pi update` depends on, without touching the pointer branch.
+#
+# The publish workflow moves `update-info` with a fast-forward commit built from git plumbing. That
+# is the one step in a release whose failure leaves a published version nobody can update to, and it
+# cannot be tested against the real branch while the branch is protected. This workflow runs the same
+# push against `pointer-rehearsal`, which carries the same ruleset, so the bypass configuration can be
+# checked before it is pointed at the branch every install reads.
+#
+# Dispatch only. It pushes to one hard-coded ref and publishes nothing.
+name: Rehearsal pointer push
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  push:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: pointer-rehearsal
+          fetch-depth: 2
+
+      - name: Push a fast-forward commit
+        env:
+          GIT_AUTHOR_NAME: ${{ github.actor }}
+          GIT_AUTHOR_EMAIL: ${{ github.actor }}@users.noreply.github.com
+          GIT_COMMITTER_NAME: ${{ github.actor }}
+          GIT_COMMITTER_EMAIL: ${{ github.actor }}@users.noreply.github.com
+        run: |
+          set -euo pipefail
+          head=$(git rev-parse HEAD)
+          tree=$(git rev-parse "HEAD^{tree}")
+          commit=$(git commit-tree "$tree" -p "$head" -m "rehearsal pointer push from Actions at $(date -u +%FT%TZ)")
+          echo "pushing $commit as ${{ github.actor }} (github-actions app id probe)"
+          git push origin "$commit:refs/heads/pointer-rehearsal"
+          echo "push accepted"
