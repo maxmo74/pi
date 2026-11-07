@@ -9,8 +9,10 @@ This package is **not** the official [Pi](https://pi.dev) release and is not aff
 - `pi update` resolves new versions from this fork's releases, and says so when official Pi is ahead of the newest fork build.
 - An install of this package is never told to run pi.dev's installer, which would install official Pi over this build and drop every patch here.
 - Resuming a session that another running Pi already has is refused, naming the process that holds it. Two writers on one session file fork its history and only the branch written last stays visible, with no warning. `PI_ALLOW_SHARED_SESSION=1` resumes anyway.
+- Deleting a session is refused while another Pi holds it, but a Pi that reports no ownership -- which on Linux is any official install, since it never registers -- does not block cleanup, because deletion is recoverable and a move is not. So `PI_ALLOW_SHARED_SESSION=1` clears an unregistered Pi for a delete, and a move still refuses without it.
+- `pi update` installs only from the npm scope this build was published in. The update pointer is a git branch, and following it to some other package would let anyone who could write that branch install code here.
 
-**Why a fork instead of a pull request:** the session move was proposed upstream in [earendil-works/pi#11583](https://github.com/earendil-works/pi/issues/11583) and closed without action. This is a maintained personal fork; nothing else about how Pi works is changed.
+**Why a fork instead of a pull request:** the session move was proposed upstream in [earendil-works/pi#11583](https://github.com/earendil-works/pi/issues/11583) and closed without action. The double-open guard was reported as [earendil-works/pi#11684](https://github.com/earendil-works/pi/issues/11684) with a two-platform reproduction, and a maintainer closed it as `no-action`. Both live here instead. Nothing else about how Pi works is changed.
 
 **Install**
 

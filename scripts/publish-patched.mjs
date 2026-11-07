@@ -16,11 +16,13 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const packageDir = join(repoRoot, "packages", "coding-agent");
 const infoPath = join(repoRoot, "patch", "update-info.json");
 const publishedName = "@maxmo74/pi-coding-agent";
-const defaultNote = "Unofficial pi fork: session moves in the /resume picker, plus selective upstream fixes.";
+const defaultNote =
+	"Unofficial pi fork by maxmo74: session moves in the /resume picker, and a session another pi holds open is refused instead of silently forked. Built from upstream release tags; an upstream release this fork has not rebuilt is reported, not installed.";
 // The registry page is where most people first read what a package is, and the manifest description is upstream's.
 // Overridden at staging time so the fork's identity shows on npm without a tracked diff in the package manifest.
+// Says what the fork changes and why, because the double-writer guard is the reason it is maintained.
 const publishedDescription =
-	"Unofficial pi fork by maxmo74: session moves in the /resume picker, plus selective fixes. Independent of and not affiliated with pi.dev.";
+	"Unofficial pi fork by maxmo74. Adds a move action to the /resume picker, so a session recorded under another directory opens here without copying files, and refuses to open a session another pi process already holds, which silently forks its history (reported upstream as #11684 and declined). Builds are cut from upstream release tags. Not affiliated with pi.dev.";
 
 function printUsage() {
 	console.log(`Usage: node scripts/publish-patched.mjs [options]

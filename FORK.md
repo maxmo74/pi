@@ -84,10 +84,10 @@ Fork-only work that is written down here rather than filed, because upstream has
 ## Remotes and branches
 
 - `origin` is this fork (`git@github.com:maxmo74/pi.git`), `upstream` is `https://github.com/earendil-works/pi.git`.
-- One permanent fork line per upstream release, cut from the release **tag**: `release/v1.5.0` is the current one, `release/v1.4.0` the previous. This is what gets published, because the published manifest pins the sibling workspace packages to the released version. `feat/session-move` was the `main`-based feature line this began on; work now happens on the current release line. A new release line is made by merging the previous release line into the new tag, which keeps the fork's own commit history and gives real three-way conflicts. Feature branches only for experiments, and delete them when they land.
+- One permanent fork line per upstream release, cut from the release **tag**: `release/v1.5.0` is the current one, `release/v1.4.0` the previous. This is what gets published, because the published manifest pins the sibling workspace packages to the released version. Work happens on the current release line. A new release line is made by merging the previous release line into the new tag, which keeps the fork's own commit history and gives real three-way conflicts. Feature branches only for experiments, and delete them when they land.
 - Never merge `upstream/main` into a release line. Rebase or re-port, so the diff stays exactly our commits.
 - The repository's **default branch is the current release line**, so someone arriving from the npm page reads this file and the fork's README instead of a stale upstream mirror. Consequence: `workflow_dispatch` opens on that branch, and a manual run of `publish.yml` needs the branch picker pointed at the release line, which is where that file lives.
-- `main` is a plain upstream mirror and deliberately lags; it carries no fork commits and no `FORK.md`. `feat/session-move` is the historical `main`-based feature line where this began. It publishes nothing and does not carry the later fixes, so read the current release line for anything real.
+- `main` is a plain upstream mirror and deliberately lags; it carries no fork commits and no `FORK.md`. The `main`-based `feat/session-move` branch this began on was deleted on 2026-11-07 and preserved as the annotated tag `archive/feat-session-move`: its 29 commits that never reached a release line are pre-rebase history, and the shipped work is only ever on a release line.
 
 ## Publishing an update
 
