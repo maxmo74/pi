@@ -736,7 +736,24 @@ async function getSelfUpdatePlan(force: boolean): Promise<SelfUpdatePlan> {
 		throw new Error(`Could not determine latest ${APP_NAME} version.`);
 	}
 
-	const packageName = latestRelease.packageName ?? PACKAGE_NAME;
+	// The update source is a git branch, so it may move this install to a renamed package but not out
+	// of the npm scope the publisher controls: a foreign-scope or unscoped name is first-come-first-
+	// served on the registry, so following one there would install whatever someone else published
+	// under it. Upstream renames inside its own scope; the same limit is what makes a rewritten
+	// update pointer harmless here.
+	const offeredPackageName = latestRelease.packageName;
+	const scopeEnd = PACKAGE_NAME.indexOf("/");
+	const updateScope = PACKAGE_NAME.startsWith("@") && scopeEnd > 0 ? PACKAGE_NAME.slice(0, scopeEnd) : undefined;
+	if (
+		offeredPackageName !== undefined &&
+		offeredPackageName !== PACKAGE_NAME &&
+		!(updateScope && offeredPackageName.startsWith(`${updateScope}/`))
+	) {
+		throw new Error(
+			`Update source offered ${offeredPackageName}@${latestRelease.version}, which is outside ${updateScope ?? PACKAGE_NAME}. Refusing to install it.`,
+		);
+	}
+	const packageName = offeredPackageName ?? PACKAGE_NAME;
 	const installSpec = `${packageName}@${latestRelease.version}`;
 	if (force || packageName !== PACKAGE_NAME || isNewerPackageVersion(latestRelease.version, VERSION)) {
 		return {

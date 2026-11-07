@@ -6,7 +6,8 @@ import { getPiUserAgent } from "./pi-user-agent.ts";
 // of the unpatched upstream one. The file is committed to the `update-info` branch and served by
 // raw.githubusercontent.com, so publishing an update needs only a git push: no API credentials, and
 // no dependency on a GitHub Release existing. The asset declares both version and packageName;
-// Pi's updater honours a package name that differs from PACKAGE_NAME.
+// the updater ignores a package name that is not this build's own, so writing that branch cannot
+// redirect an install to a different package.
 const LATEST_VERSION_URL = "https://raw.githubusercontent.com/maxmo74/pi/update-info/patch/update-info.json";
 // Upstream keeps its own endpoint so a fork build can report that pi.dev moved ahead while this
 // repository has not published a matching build yet.
