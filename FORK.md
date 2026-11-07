@@ -93,15 +93,18 @@ Fork-only work that is written down here rather than filed, because upstream has
 
 Publish only from a release line cut from the upstream release **tag**. Never from a branch that lags the release it names, and never from `main` ahead of it either: the published `package.json` pins the sibling workspace packages to the released version, so building past the tag yields a package whose own code calls exports the pinned `@earendil-works/pi-tui` does not have, which is how the extension crash in the ledger happened.
 
-Cutting a new release line, in a worktree so the feature checkout never moves. Merge, don't re-diff: the merge base is the previous release's tag, so Git resolves everything that didn't move and the conflicts are the real ones.
+Cutting a new release line, in a worktree so the published line never moves. Merge, don't re-diff: the merge base is the previous release's tag, so Git resolves everything that didn't move and the conflicts are the real ones. Checkouts live under the project directory, one worktree per line (`/opt/projects/pi-max-fork/worktrees/release-v<x.y.z>`); see that directory's README for the layout.
 
 ```
+cd /opt/projects/pi-max-fork/repo
 git fetch --tags upstream
-git worktree add -b release/v1.5.0 ../pi-max-150 v1.5.0
-cd ../pi-max-150 && npm ci --ignore-scripts
+git worktree add -b release/v1.6.0 ../worktrees/release-v1.6.0 v1.6.0
+cd ../worktrees/release-v1.6.0 && npm ci --ignore-scripts
 (cd packages/ai && npm run generate-models)          # data dir is gitignored; tsc needs it
-git merge --no-ff release/v1.4.0                     # port the whole fork line with history
+git merge --no-ff release/v1.5.0                     # port the whole fork line with history
 ```
+
+When a line is superseded, retire the checkout and keep the branch: `git worktree remove ../worktrees/release-v1.5.0`. The branch stays in `repo/` and on origin, so recreating the directory is the same `worktree add` with an existing branch name.
 
 Expect conflicts in the picker, `session-manager.ts` at `forkFrom`, and `package-manager-cli.ts`'s imports. The standing rule for `forkFrom` is: keep upstream's I/O shape, wrap it in `withSessionFileUsage`. If upstream changed a helper our code calls, follow the rename rather than re-adding the old name -- v1.5.0 replaced the picker's local `shortenPath` with `shortenHomePath` from `utils/paths.ts`, and our move confirmation had to follow. Where upstream reimplements something we already own, keep ours and drop theirs: v1.5.0 added its own `deleteSessionFile` in the picker, trash-CLI-then-unlink, which is what our `src/core/session-delete.ts` has done since the start except that ours also refuses sessions a live process holds. Take ours, delete theirs, and the picker's call site needs no change.
 
