@@ -96,8 +96,18 @@ jobs:
           node --version
           npm --version
 
+      # Model data comes from the revision pinned in nix/model-catalog.json instead of a live
+      # provider scrape, which is what `npm run release` and the Nix build do. `npm run build`
+      # regenerates it by querying each provider's listing endpoint, and a provider that answers
+      # with a truncated list yields a catalog whose model IDs do not match the ones this tag's own
+      # tests name, so `npm run check` fails with type errors in packages/ai about a tree that is
+      # fine -- which is what happened to the first attempt at 1.5.0-max.5. A pinned revision also
+      # means the tag builds with the same model data every time, which is the point of a tag.
+      - name: Hydrate the pinned model catalog
+        run: node scripts/publish-patched.mjs --hydrate
+
       - name: Build
-        run: npm run build
+        run: npm run build:offline
 
       # Trusted publishing needs npm 11.5.1 or newer and the Node 22 line bundles npm 10.x; this is
       # the version upstream's own npm publish job upgrades to.
@@ -211,12 +221,17 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
 
+      # Same hydration as the publish job: a build here that scraped live provider listings could
+      # fail on model IDs the tests name rather than on anything about Linux ownership.
+      - name: Hydrate the pinned model catalog
+        run: node scripts/publish-patched.mjs --hydrate
+
       # The build is not optional here: session-manager.ts imports values from @earendil-works/pi-ai,
       # which imports @earendil-works/pi-schema, and those packages resolve to their dist/ output.
       # Running the test without a build fails with "Failed to resolve entry for package
       # '@earendil-works/pi-schema'", which is what the first run of this job did.
       - name: Build
-        run: npm run build
+        run: npm run build:offline
 
       # Only this file. The other ownership tests fork a TypeScript fixture and so depend on the Node
       # build in the image supporting type stripping, which the UBI module stream does not promise.

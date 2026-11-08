@@ -7,10 +7,12 @@
 // trusted publishing and moves the update pointer, so --publish here is for the one publish that
 // creates the package and for recovery when CI cannot run.
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { hydrateModelCatalogBytes } from "./update-model-catalog-pin.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const packageDir = join(repoRoot, "packages", "coding-agent");
@@ -28,9 +30,11 @@ function printUsage() {
 	console.log(`Usage: node scripts/publish-patched.mjs [options]
 
 Stages the patched coding-agent package under ${publishedName} for npm publishing.
-Run \`npm run build\` first: the staged tree is copied from the current build output.
+Run \`node scripts/publish-patched.mjs --hydrate\` then \`npm run build:offline\` first: the staged
+tree is copied from the current build output.
 
 Options:
+  --hydrate          Load model data from the pinned catalog revision and exit (see below)
   --publish          Publish the staged package instead of only preparing it
   --revision <n>     Patch revision; defaults to the next unused one in the registry
   --help             Show this usage
@@ -39,6 +43,7 @@ Options:
 
 const { values: options } = parseArgs({
 	options: {
+		hydrate: { type: "boolean", default: false },
 		publish: { type: "boolean", default: false },
 		revision: { type: "string" },
 		help: { type: "boolean", default: false },
@@ -46,6 +51,22 @@ const { values: options } = parseArgs({
 });
 if (options.help) {
 	printUsage();
+	process.exit(0);
+}
+
+if (options.hydrate) {
+	const pinPath = join(repoRoot, "nix", "model-catalog.json");
+	const revision = JSON.parse(readFileSync(pinPath, "utf8")).revision;
+	if (!/^sha256-[0-9a-f]{64}$/.test(revision)) throw new Error(`${pinPath} does not pin a sha256 revision`);
+	// The typed catalog is the representation whose bytes a revision hashes.
+	const response = await fetch(`https://pi.dev/api/models/revisions/${revision}?types=chat,image,classifier`);
+	if (!response.ok) throw new Error(`Catalog revision ${revision} is unavailable: HTTP ${response.status}`);
+	const bytes = Buffer.from(await response.arrayBuffer());
+	if (`sha256-${createHash("sha256").update(bytes).digest("hex")}` !== revision) {
+		throw new Error(`Catalog revision ${revision} does not match its content`);
+	}
+	hydrateModelCatalogBytes(repoRoot, bytes);
+	console.log(`Model data hydrated from pinned catalog ${revision}`);
 	process.exit(0);
 }
 
