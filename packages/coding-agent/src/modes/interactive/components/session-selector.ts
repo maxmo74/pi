@@ -120,8 +120,7 @@ class SessionSelectorHeader implements Component {
 	invalidate(): void {}
 
 	render(width: number): string[] {
-		const title = this.scope === "current" ? "Resume Session (Current Folder)" : "Resume Session (All)";
-		const leftText = theme.bold(title);
+		const targetDir = shortenHomePath(this.moveTarget);
 
 		const sortLabel = this.sortMode === "threaded" ? "Threaded" : this.sortMode === "recent" ? "Recent" : "Fuzzy";
 		const sortText = theme.fg("muted", "Sort: ") + theme.fg("accent", sortLabel);
@@ -141,6 +140,19 @@ class SessionSelectorHeader implements Component {
 
 		const rightText = truncateToWidth(`${scopeText}  ${nameText}  ${sortText}`, width, "");
 		const availableLeft = Math.max(0, width - visibleWidth(rightText) - 1);
+
+		// The directory Pi was started in, spelled out where the header otherwise says only "Current Folder",
+		// so it is legible while browsing rather than first in the move confirmation, after the key that starts
+		// a move is pressed. The readout on the right is fixed text, so the path gives way first: it loses
+		// leading segments and keeps its tail, because the last segment is what tells one project directory
+		// from another. When even that will not fit, the path moves to the hint line, which has the whole
+		// terminal width -- the folder is always on screen, in exactly one of the two places.
+		const label = this.scope === "current" ? "Current Folder" : "All";
+		const joiner = this.scope === "current" ? ": " : " · → ";
+		const fitted = fitPathTail(targetDir, availableLeft - visibleWidth(`Resume Session (${label}${joiner})`));
+		const title = fitted === undefined ? `Resume Session (${label})` : `Resume Session (${label}${joiner}${fitted})`;
+		const leftText = theme.bold(title);
+
 		const left = truncateToWidth(leftText, availableLeft, "");
 		const spacing = Math.max(0, width - visibleWidth(left) - visibleWidth(rightText));
 
@@ -165,8 +177,12 @@ class SessionSelectorHeader implements Component {
 		} else {
 			const pathState = this.showPath ? "(on)" : "(off)";
 			const sep = theme.fg("muted", " · ");
+			const fallbackPath = fitted === undefined ? theme.fg("muted", `→ ${targetDir}`) + sep : "";
 			const hint1 =
-				keyHint("tui.input.tab", "scope") + sep + theme.fg("muted", 're:<pattern> regex · "phrase" exact');
+				fallbackPath +
+				keyHint("tui.input.tab", "scope") +
+				sep +
+				theme.fg("muted", 're:<pattern> regex · "phrase" exact');
 			const hint2Parts = [
 				keyHint("app.session.toggleSort", "sort"),
 				keyHint("app.session.toggleNamedFilter", "named"),
@@ -184,6 +200,22 @@ class SessionSelectorHeader implements Component {
 
 		return [`${left}${" ".repeat(spacing)}${rightText}`, hintLine1, hintLine2];
 	}
+}
+
+/**
+ * Fit a path into `budget` columns by dropping leading segments and keeping the tail, marked
+ * with a leading ellipsis. Returns undefined when even `…/<last segment>` will not fit, so the
+ * caller can leave the path out instead of showing a fragment that identifies nothing.
+ */
+function fitPathTail(path: string, budget: number): string | undefined {
+	if (budget <= 0) return undefined;
+	if (visibleWidth(path) <= budget) return path;
+	const segments = path.split(/[/\\]/).filter((segment) => segment.length > 0);
+	for (let start = 1; start < segments.length; start++) {
+		const candidate = `…/${segments.slice(start).join("/")}`;
+		if (visibleWidth(candidate) <= budget) return candidate;
+	}
+	return undefined;
 }
 
 /** A session tree node for hierarchical display */

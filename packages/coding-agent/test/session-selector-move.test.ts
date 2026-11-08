@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { setKeybindings } from "@earendil-works/pi-tui";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
@@ -124,5 +125,63 @@ describe("session picker move", () => {
 		await flush();
 		expect(picker.render(140).join("\n")).toContain("Cannot move: Session is busy");
 		expect(select).not.toHaveBeenCalled();
+	});
+	it("shows the destination directory in both scopes", async () => {
+		const picker = new SessionSelectorComponent(
+			async () => [session("/target")],
+			async () => [session("/elsewhere")],
+			() => {},
+			() => {},
+			() => {},
+			() => {},
+			{ moveTarget: "/target", moveSession: () => "" },
+		);
+		await flush();
+		const current = picker.render(140).join("\n");
+		expect(current).toContain("Resume Session (Current Folder: /target)");
+		picker.handleInput("\t");
+		await flush();
+		// Same directory in both scopes: in "All" it is also where a confirmed move lands.
+		const all = picker.render(140).join("\n");
+		expect(all).toContain("Resume Session (All · → /target)");
+	});
+	it("keeps the folder on screen at every width, in exactly one place", async () => {
+		const target = "/opt/projects/pi-max-fork/worktrees/release-v1.5.0";
+		const picker = new SessionSelectorComponent(
+			async () => [session("/target")],
+			async () => [],
+			() => {},
+			() => {},
+			() => {},
+			() => {},
+			{ moveTarget: target },
+		);
+		await flush();
+		for (const width of [140, 120, 100, 90, 80]) {
+			const rendered = picker.render(width).join("\n");
+			// Header, with the whole path or with leading segments dropped, or the hint line.
+			const inHeader = /Current Folder: (?:[^)]*release-v1\.5\.0)/.test(rendered);
+			const onHintLine = rendered.includes(`→ ${target}`);
+			expect(inHeader || onHintLine, `folder is nowhere on screen at width ${width}`).toBe(true);
+			expect(inHeader && onHintLine, `folder is shown twice at width ${width}`).toBe(false);
+		}
+	});
+	it("shortens the destination under the home directory", async () => {
+		const home = process.env.HOME ?? homedir();
+		const picker = new SessionSelectorComponent(
+			async () => [session("/x")],
+			async () => [session("/x")],
+			() => {},
+			() => {},
+			() => {},
+			() => {},
+			{ moveTarget: `${home}/gitlab/pi` },
+		);
+		await flush();
+		picker.handleInput("\t");
+		await flush();
+		const rendered = picker.render(140).join("\n");
+		expect(rendered).toContain("→ ~/gitlab/pi");
+		expect(rendered).not.toContain(home);
 	});
 });
