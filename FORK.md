@@ -42,7 +42,10 @@ git tag v1.6.0-max.0 && git push origin v1.6.0-max.0
 ```
 
 `publish.yml` runs the suite, publishes through npm trusted publishing, and moves the `update-info`
-pointer once npm actually serves the version.
+pointer once npm actually serves the version. It is the only workflow enabled on the fork: upstream's
+CI, Nix, npm audit, model-catalog publishing, preview packages and the issue and PR automation are all
+disabled, because they build or publish things this fork does not ship, and several of them act on
+issues. `gh workflow enable "<name>"` reverses any of them.
 
 ## Testing
 
