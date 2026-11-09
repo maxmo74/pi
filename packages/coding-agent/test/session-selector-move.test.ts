@@ -23,7 +23,7 @@ function session(cwd: string): SessionInfo {
 describe("session picker move", () => {
 	beforeAll(() => initTheme("dark"));
 	beforeEach(() => setKeybindings(new KeybindingsManager()));
-	it("requires confirmation, allows cancellation, and refreshes after moving", async () => {
+	it("requires confirmation, allows cancellation, and corrects the row in place after moving", async () => {
 		const move = vi.fn(() => "/new/session.jsonl");
 		const load = vi.fn(async () => [session("/elsewhere")]);
 		const select = vi.fn();
@@ -37,6 +37,7 @@ describe("session picker move", () => {
 			{ moveTarget: "/target", moveSession: move },
 		);
 		await flush();
+		const loadsBeforeMove = load.mock.calls.length;
 		picker.handleInput("\x19");
 		expect(picker.render(140).join("\n")).toContain("Move session from /elsewhere to /target?");
 		expect(move).not.toHaveBeenCalled();
@@ -47,7 +48,13 @@ describe("session picker move", () => {
 		await flush();
 		expect(move).toHaveBeenCalledExactlyOnceWith("/session.jsonl", "/target");
 		expect(select).not.toHaveBeenCalled();
-		expect(load).toHaveBeenCalledTimes(2);
+		// The row is corrected where it stands. Re-reading the list would move the cursor: a reload arrives in
+		// pages and setSessions() clamps the index to the page in hand, so deleting or moving near the bottom
+		// of a long list used to land the cursor somewhere in the middle.
+		expect(load.mock.calls).toHaveLength(loadsBeforeMove);
+		// And the session is here now, so there is nothing left to move.
+		picker.handleInput("\x19");
+		expect(picker.render(140).join("\n")).not.toContain("Move session from");
 	});
 	it("does nothing for a session already in the destination", async () => {
 		const move = vi.fn(() => "");

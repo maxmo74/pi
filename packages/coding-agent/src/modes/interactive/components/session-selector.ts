@@ -840,8 +840,8 @@ export class SessionSelectorComponent extends Container implements Focusable {
 			this.sessionList.moving = true;
 			this.cancelLoads();
 			try {
-				(options?.moveSession ?? moveSessionHere)(session.path, this.sessionList.moveTarget);
-				await this.refreshSessionsAfterMutation();
+				const destination = (options?.moveSession ?? moveSessionHere)(session.path, this.sessionList.moveTarget);
+				this.applyMovedSession(session, destination);
 				this.header.setStatusMessage({ type: "info", message: "Session moved to starting directory" }, 3000);
 			} catch (error) {
 				this.header.setStatusMessage({
@@ -908,20 +908,26 @@ export class SessionSelectorComponent extends Container implements Focusable {
 			const result = await deleteSessionFile(sessionPath);
 
 			if (result.ok) {
-				if (this.currentSessions) {
-					this.currentSessions = this.currentSessions.filter((s) => s.path !== sessionPath);
-				}
-				if (this.allSessions) {
-					this.allSessions = this.allSessions.filter((s) => s.path !== sessionPath);
-				}
-
-				const sessions = this.scope === "all" ? (this.allSessions ?? []) : (this.currentSessions ?? []);
-				const showCwd = this.scope === "all";
-				this.sessionList.setSessions(sessions, showCwd);
-
 				const msg = result.method === "trash" ? "Session moved to trash" : "Session deleted";
 				this.header.setStatusMessage({ type: "info", message: msg }, 2000);
-				await this.refreshSessionsAfterMutation();
+				if ((this.scope === "all" ? this.allLoad : this.currentLoad) !== null) {
+					// A load that started before the delete can still hand back the row that was just removed, so
+					// while one is running the list has to be read again. The cursor moves on its own anyway while
+					// rows are arriving, so a reload costs nothing extra here.
+					await this.refreshSessionsAfterMutation();
+				} else {
+					// Otherwise fold the delete into what is already on screen. Re-reading clamps the cursor to the
+					// first page of the reload (see applyMovedSession), which used to send anyone who deleted a row
+					// near the bottom of a long list somewhere into the middle of it.
+					if (this.currentSessions) {
+						this.currentSessions = this.currentSessions.filter((s) => s.path !== sessionPath);
+					}
+					if (this.allSessions) {
+						this.allSessions = this.allSessions.filter((s) => s.path !== sessionPath);
+					}
+					const sessions = (this.scope === "all" ? this.allSessions : this.currentSessions) ?? [];
+					this.sessionList.setSessions(sessions, this.scope === "all");
+				}
 			} else {
 				const errorMessage = result.error ?? "Unknown error";
 				this.header.setStatusMessage({ type: "error", message: `Failed to delete: ${errorMessage}` }, 3000);
@@ -1084,6 +1090,44 @@ export class SessionSelectorComponent extends Container implements Focusable {
 		this.header.setNameFilter(this.nameFilter);
 		this.sessionList.setNameFilter(this.nameFilter);
 		this.requestRender();
+	}
+
+	/**
+	 * Fold a move into the lists already on screen instead of reloading them.
+	 *
+	 * A reload is what made deleting or moving feel like it lost your place: loadScope() reports progress in
+	 * pages, setSessions() clamps the cursor to whatever the current page holds, and the index never grows
+	 * back when the rest of the list lands -- so a cursor at row 38 of 45 ends up around row 19. A move also
+	 * changes the selected row's path, which is the key a reload re-finds the selection by.
+	 *
+	 * Correcting the cached entry in place avoids both: the session is still listed either way, only its
+	 * folder (and, for a real move, its file) changed. The scope that is not on screen is dropped so it
+	 * re-reads lazily when Tab switches to it, since the moved session now belongs there.
+	 */
+	private applyMovedSession(session: SessionInfo, destination: string): void {
+		const cwd = this.sessionList.moveTarget;
+		for (const cached of [this.currentSessions, this.allSessions]) {
+			if (!cached) continue;
+			for (const entry of cached) {
+				if (entry.path === session.path) {
+					entry.path = destination;
+					entry.cwd = cwd;
+				}
+			}
+		}
+		if (this.scope === "all") {
+			this.currentSessions = null;
+		} else {
+			this.allSessions = null;
+		}
+		const sessions = this.scope === "all" ? this.allSessions : this.currentSessions;
+		if (sessions === null) {
+			// Nothing on screen to fold the change into. cancelLoads() drops the cache of any load that was
+			// still running, so moving while the list is arriving is the one case that has to read it again.
+			void this.loadScope(this.scope);
+			return;
+		}
+		this.sessionList.setSessions(sessions, this.scope === "all");
 	}
 
 	private async refreshSessionsAfterMutation(): Promise<void> {

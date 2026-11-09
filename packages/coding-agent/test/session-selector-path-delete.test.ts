@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setKeybindings } from "@earendil-works/pi-tui";
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import type { SessionInfo } from "../src/core/session-manager.ts";
 import { SessionSelectorComponent } from "../src/modes/interactive/components/session-selector.ts";
@@ -86,6 +86,20 @@ function createSymlinkedSessionPaths(): {
 const CTRL_D = "\x04";
 const CTRL_BACKSPACE = "\x1b[127;5u";
 
+// The delete handler under test calls this; the file it names is irrelevant to what is being asserted, which
+// is what the picker does to its own lists once a delete succeeds.
+vi.mock("../src/core/session-delete.ts", () => ({
+	deleteSessionFile: vi.fn(() => ({ ok: true as const, method: "unlink" as const })),
+}));
+
+/** The text of the row the cursor is on, in a rendered picker. */
+function selectedRowText(rendered: string): string {
+	const line = stripAnsi(rendered)
+		.split("\n")
+		.find((row) => row.includes("›"));
+	return line ?? "<no row marked>";
+}
+
 describe("session selector path/delete interactions", () => {
 	const keybindings = new KeybindingsManager();
 	const tempDirs: string[] = [];
@@ -127,6 +141,42 @@ describe("session selector path/delete interactions", () => {
 		list.handleInput(CTRL_BACKSPACE);
 
 		expect(confirmationChanges).toEqual([]);
+	});
+
+	it("keeps the cursor where it was after a delete instead of reloading the list", async () => {
+		const sessions = ["alpha", "bravo", "charlie"].map((id) =>
+			makeSession({ id, firstMessage: id, allMessagesText: id, cwd: "/here" }),
+		);
+		const load = vi.fn(async () => sessions);
+		const selector = new SessionSelectorComponent(
+			load,
+			load,
+			() => {},
+			() => {},
+			() => {},
+			() => {},
+			{ keybindings },
+		);
+		await flushPromises();
+		const loadsBeforeDelete = load.mock.calls.length;
+
+		const list = selector.getSessionList();
+		list.handleInput("\x1b[B"); // down onto the middle row
+		expect(selectedRowText(selector.render(140).join("\n"))).toContain("bravo");
+
+		list.handleInput(CTRL_D);
+		list.handleInput("\r");
+		await flushPromises();
+
+		const rendered = stripAnsi(selector.render(140).join("\n"));
+		expect(rendered).toContain("alpha");
+		expect(rendered).not.toContain("bravo");
+		expect(rendered).toContain("charlie");
+		// The row that took the deleted one's place is under the cursor, and nothing was re-read: a reload
+		// arrives in pages and setSessions() clamps the cursor to the page in hand, so deleting near the
+		// bottom of a long list used to drop the cursor somewhere in the middle of it.
+		expect(selectedRowText(rendered)).toContain("charlie");
+		expect(load.mock.calls).toHaveLength(loadsBeforeDelete);
 	});
 
 	it("enters confirmation mode on Ctrl+D even with a non-empty search query", async () => {
