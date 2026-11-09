@@ -211,4 +211,29 @@ describe("session move", () => {
 		expect(() => moveSessionHere(source, target, agent)).toThrow();
 		expect(readFileSync(source, "utf8")).toBe(`${original}broken\n`);
 	});
+	it("relabels a session that is already stored in the destination folder", () => {
+		// The picker lists sessions by storage directory and labels them by the header, so a session whose
+		// header names another folder is already here as far as listing goes, while appearing to belong
+		// elsewhere. Moving it used to fail with "storage paths are identical"; the header is the only thing
+		// that is wrong, so it is the only thing that changes.
+		const elsewhere = join(root, "elsewhere");
+		mkdirSync(elsewhere);
+		const stored = join(getDefaultSessionDir(target, agent), "stale.jsonl");
+		writeFileSync(
+			stored,
+			`${JSON.stringify({ type: "session", version: 3, id: "stale", timestamp: new Date().toISOString(), cwd: elsewhere })}\n{ "type": "custom", "id": "b", "parentId": null, "data": "kept" }\n`,
+		);
+		const destination = moveSessionHere(stored, target, agent);
+		expect(destination).toBe(stored);
+		const result = readFileSync(stored, "utf8");
+		expect(JSON.parse(result.split("\n")[0])).toMatchObject({ cwd: target, id: "stale" });
+		expect(result.slice(result.indexOf("\n") + 1)).toBe(
+			`{ "type": "custom", "id": "b", "parentId": null, "data": "kept" }\n`,
+		);
+		// Same directory, same single file, and the usual backup of the bytes that were overwritten.
+		expect(readdirSync(getDefaultSessionDir(target, agent)).filter((f) => f.endsWith(".jsonl"))).toEqual([
+			"stale.jsonl",
+		]);
+		expect(readdirSync(join(agent, "session-move-backups")).filter((f) => f.endsWith(".jsonl"))).toHaveLength(1);
+	});
 });

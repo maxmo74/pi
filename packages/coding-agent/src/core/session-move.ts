@@ -11,6 +11,8 @@ import {
 	readFileSync,
 	readSync,
 	realpathSync,
+	renameSync,
+	rmSync,
 	statSync,
 	unlinkSync,
 	writeFileSync,
@@ -91,7 +93,12 @@ export function moveSessionHere(sourcePath: string, targetCwd: string, agentDir 
 			original.subarray(newline + 1),
 		]);
 		const destination = join(getDefaultSessionDir(target, agentDir), basename(source));
-		if (resolve(destination) === source) throw new Error("Source and destination storage paths are identical.");
+		// A session can be stored under one folder while its header names another. The picker lists sessions by
+		// storage directory and labels them by the header, so such a session appears under the current folder
+		// wearing another folder's name, and asking to move it there lands here: the destination is the source.
+		// Nothing needs moving and nothing can be linked over an existing name, so relabel it in place instead
+		// of refusing -- the header is the only thing that disagrees with reality.
+		const inPlace = resolve(destination) === source;
 		const backupDir = join(agentDir, "session-move-backups");
 		mkdirSync(backupDir, { recursive: true, mode: 0o700 });
 		const backup = join(backupDir, `${randomUUID()}.jsonl`);
@@ -115,6 +122,21 @@ export function moveSessionHere(sourcePath: string, targetCwd: string, agentDir 
 		} finally {
 			closeSync(fd);
 		}
+
+		if (inPlace) {
+			try {
+				if (!readFileSync(temporary).equals(output)) throw new Error("Relabelled session verification failed.");
+				// rename replaces the destination, which is what an in-place relabel needs; the hard link below
+				// deliberately cannot replace anything, which is what makes a real move safe against a name that
+				// already exists. The backup written above holds the bytes being overwritten either way.
+				renameSync(temporary, destination);
+			} catch (error) {
+				rmSync(temporary, { force: true });
+				throw error;
+			}
+			return destination;
+		}
+
 		let published = false;
 		let marked = false;
 		try {
