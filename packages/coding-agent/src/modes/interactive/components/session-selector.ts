@@ -1,6 +1,3 @@
-import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { unlink } from "node:fs/promises";
 import {
 	type Component,
 	Container,
@@ -13,7 +10,9 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import { KeybindingsManager } from "../../../core/keybindings.ts";
+import { deleteSessionFile } from "../../../core/session-delete.ts";
 import type { SessionInfo, SessionListProgress } from "../../../core/session-manager.ts";
+import { moveSessionHere } from "../../../core/session-move.ts";
 import { canonicalizePath, getPathComparisonKey, shortenHomePath } from "../../../utils/paths.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
@@ -55,6 +54,9 @@ class SessionSelectorHeader implements Component {
 	private statusMessage: { type: "info" | "error"; message: string } | null = null;
 	private statusTimeout: ReturnType<typeof setTimeout> | null = null;
 	private showRenameHint = false;
+	public canMove: () => boolean = () => false;
+	public confirmingMove: SessionInfo | null = null;
+	public moveTarget = process.cwd();
 
 	constructor(scope: SessionScope, sortMode: SortMode, nameFilter: NameFilter, requestRender: () => void) {
 		this.scope = scope;
@@ -118,8 +120,7 @@ class SessionSelectorHeader implements Component {
 	invalidate(): void {}
 
 	render(width: number): string[] {
-		const title = this.scope === "current" ? "Resume Session (Current Folder)" : "Resume Session (All)";
-		const leftText = theme.bold(title);
+		const targetDir = shortenHomePath(this.moveTarget);
 
 		const sortLabel = this.sortMode === "threaded" ? "Threaded" : this.sortMode === "recent" ? "Recent" : "Fuzzy";
 		const sortText = theme.fg("muted", "Sort: ") + theme.fg("accent", sortLabel);
@@ -139,13 +140,33 @@ class SessionSelectorHeader implements Component {
 
 		const rightText = truncateToWidth(`${scopeText}  ${nameText}  ${sortText}`, width, "");
 		const availableLeft = Math.max(0, width - visibleWidth(rightText) - 1);
+
+		// The directory Pi was started in, spelled out where the header otherwise says only "Current Folder",
+		// so it is legible while browsing rather than first in the move confirmation, after the key that starts
+		// a move is pressed. The readout on the right is fixed text, so the path gives way first: it loses
+		// leading segments and keeps its tail, because the last segment is what tells one project directory
+		// from another. When even that will not fit, the path moves to the hint line, which has the whole
+		// terminal width -- the folder is always on screen, in exactly one of the two places.
+		const label = this.scope === "current" ? "Current Folder" : "All";
+		const joiner = this.scope === "current" ? ": " : " · → ";
+		const fitted = fitPathTail(targetDir, availableLeft - visibleWidth(`Resume Session (${label}${joiner})`));
+		const title = fitted === undefined ? `Resume Session (${label})` : `Resume Session (${label}${joiner}${fitted})`;
+		const leftText = theme.bold(title);
+
 		const left = truncateToWidth(leftText, availableLeft, "");
 		const spacing = Math.max(0, width - visibleWidth(left) - visibleWidth(rightText));
 
 		// Build hint lines - changes based on state (all branches truncate to width)
 		let hintLine1: string;
 		let hintLine2: string;
-		if (this.confirmingDeletePath !== null) {
+		if (this.confirmingMove !== null) {
+			hintLine1 = truncateToWidth(
+				`Move session from ${shortenHomePath(this.confirmingMove.cwd)} to ${shortenHomePath(this.moveTarget)}?`,
+				width,
+				"…",
+			);
+			hintLine2 = `${keyHint("tui.select.confirm", "confirm")} · ${keyHint("tui.select.cancel", "cancel")}`;
+		} else if (this.confirmingDeletePath !== null) {
 			const confirmHint = `Delete session? ${keyHint("tui.select.confirm", "confirm")} · ${keyHint("tui.select.cancel", "cancel")}`;
 			hintLine1 = theme.fg("error", truncateToWidth(confirmHint, width, "…"));
 			hintLine2 = "";
@@ -156,8 +177,12 @@ class SessionSelectorHeader implements Component {
 		} else {
 			const pathState = this.showPath ? "(on)" : "(off)";
 			const sep = theme.fg("muted", " · ");
+			const fallbackPath = fitted === undefined ? theme.fg("muted", `→ ${targetDir}`) + sep : "";
 			const hint1 =
-				keyHint("tui.input.tab", "scope") + sep + theme.fg("muted", 're:<pattern> regex · "phrase" exact');
+				fallbackPath +
+				keyHint("tui.input.tab", "scope") +
+				sep +
+				theme.fg("muted", 're:<pattern> regex · "phrase" exact');
 			const hint2Parts = [
 				keyHint("app.session.toggleSort", "sort"),
 				keyHint("app.session.toggleNamedFilter", "named"),
@@ -167,6 +192,7 @@ class SessionSelectorHeader implements Component {
 			if (this.showRenameHint) {
 				hint2Parts.push(keyHint("app.session.rename", "rename"));
 			}
+			if (this.canMove()) hint2Parts.unshift(keyHint("app.session.move", "move here"));
 			const hint2 = hint2Parts.join(sep);
 			hintLine1 = truncateToWidth(hint1, width, "…");
 			hintLine2 = truncateToWidth(hint2, width, "…");
@@ -174,6 +200,22 @@ class SessionSelectorHeader implements Component {
 
 		return [`${left}${" ".repeat(spacing)}${rightText}`, hintLine1, hintLine2];
 	}
+}
+
+/**
+ * Fit a path into `budget` columns by dropping leading segments and keeping the tail, marked
+ * with a leading ellipsis. Returns undefined when even `…/<last segment>` will not fit, so the
+ * caller can leave the path out instead of showing a fragment that identifies nothing.
+ */
+function fitPathTail(path: string, budget: number): string | undefined {
+	if (budget <= 0) return undefined;
+	if (visibleWidth(path) <= budget) return path;
+	const segments = path.split(/[/\\]/).filter((segment) => segment.length > 0);
+	for (let start = 1; start < segments.length; start++) {
+		const candidate = `…/${segments.slice(start).join("/")}`;
+		if (visibleWidth(candidate) <= budget) return candidate;
+	}
+	return undefined;
 }
 
 /** A session tree node for hierarchical display */
@@ -298,6 +340,21 @@ class SessionList implements Component, Focusable {
 	public onDeleteSession?: (sessionPath: string) => Promise<void>;
 	public onRenameSession?: (sessionPath: string) => void;
 	public onError?: (message: string) => void;
+	public moveTarget = process.cwd();
+	private confirmingMove: SessionInfo | null = null;
+	public moving = false;
+	public onMoveConfirmationChange?: (session: SessionInfo | null) => void;
+	public onMoveSession?: (session: SessionInfo) => Promise<void>;
+
+	canMoveSelected(): boolean {
+		const selected = this.filteredSessions[this.selectedIndex]?.session;
+		return (
+			!!selected?.cwd &&
+			!this.isCurrentSessionPath(selected.path) &&
+			canonicalizePath(selected.cwd) !== canonicalizePath(this.moveTarget)
+		);
+	}
+
 	private maxVisible: number = 10; // Max sessions visible (one line each)
 
 	// Focusable implementation - propagate to searchInput for IME cursor positioning
@@ -530,6 +587,20 @@ class SessionList implements Component, Focusable {
 	handleInput(keyData: string): void {
 		const kb = getKeybindings();
 
+		if (this.moving) return;
+		if (this.confirmingMove) {
+			if (kb.matches(keyData, "tui.select.confirm")) {
+				const selected = this.confirmingMove;
+				this.confirmingMove = null;
+				this.onMoveConfirmationChange?.(null);
+				void this.onMoveSession?.(selected);
+			} else if (kb.matches(keyData, "tui.select.cancel")) {
+				this.confirmingMove = null;
+				this.onMoveConfirmationChange?.(null);
+			}
+			return;
+		}
+
 		// Handle delete confirmation state first - intercept all keys
 		if (this.confirmingDeletePath !== null) {
 			if (kb.matches(keyData, "tui.select.confirm")) {
@@ -543,6 +614,19 @@ class SessionList implements Component, Focusable {
 				return;
 			}
 			// Ignore all other keys while confirming
+			return;
+		}
+
+		if (kb.matches(keyData, "app.session.move")) {
+			if (this.canMoveSelected()) {
+				this.confirmingMove = this.filteredSessions[this.selectedIndex]!.session;
+				this.onMoveConfirmationChange?.(this.confirmingMove);
+				return;
+			}
+			// Nothing to move here, so keep the editor binding usable in the search field.
+			// Same convention as app.session.deleteNoninvasive, which defers to the input.
+			this.searchInput.handleInput(keyData);
+			this.filterSessions(this.searchInput.getValue());
 			return;
 		}
 
@@ -639,46 +723,6 @@ class SessionList implements Component, Focusable {
 type SessionsLoader = (onProgress?: SessionListProgress, signal?: AbortSignal) => Promise<SessionInfo[]>;
 
 /**
- * Delete a session file, trying the `trash` CLI first, then falling back to unlink
- */
-async function deleteSessionFile(
-	sessionPath: string,
-): Promise<{ ok: boolean; method: "trash" | "unlink"; error?: string }> {
-	// Try `trash` first (if installed)
-	const trashArgs = sessionPath.startsWith("-") ? ["--", sessionPath] : [sessionPath];
-	const trashResult = spawnSync("trash", trashArgs, { encoding: "utf-8" });
-
-	const getTrashErrorHint = (): string | null => {
-		const parts: string[] = [];
-		if (trashResult.error) {
-			parts.push(trashResult.error.message);
-		}
-		const stderr = trashResult.stderr?.trim();
-		if (stderr) {
-			parts.push(stderr.split("\n")[0] ?? stderr);
-		}
-		if (parts.length === 0) return null;
-		return `trash: ${parts.join(" · ").slice(0, 200)}`;
-	};
-
-	// If trash reports success, or the file is gone afterwards, treat it as successful
-	if (trashResult.status === 0 || !existsSync(sessionPath)) {
-		return { ok: true, method: "trash" };
-	}
-
-	// Fallback to permanent deletion
-	try {
-		await unlink(sessionPath);
-		return { ok: true, method: "unlink" };
-	} catch (err) {
-		const unlinkError = err instanceof Error ? err.message : String(err);
-		const trashErrorHint = getTrashErrorHint();
-		const error = trashErrorHint ? `${unlinkError} (${trashErrorHint})` : unlinkError;
-		return { ok: false, method: "unlink", error };
-	}
-}
-
-/**
  * Component that renders a session selector
  */
 export class SessionSelectorComponent extends Container implements Focusable {
@@ -759,6 +803,8 @@ export class SessionSelectorComponent extends Container implements Focusable {
 			renameSession?: (sessionPath: string, currentName: string | undefined) => Promise<void>;
 			showRenameHint?: boolean;
 			keybindings?: KeybindingsManager;
+			moveTarget?: string;
+			moveSession?: (source: string, target: string) => string;
 		},
 		currentSessionFilePath?: string,
 	) {
@@ -782,6 +828,31 @@ export class SessionSelectorComponent extends Container implements Focusable {
 			this.keybindings,
 			currentSessionFilePath,
 		);
+
+		this.sessionList.moveTarget = options?.moveTarget ?? process.cwd();
+		this.header.moveTarget = this.sessionList.moveTarget;
+		this.header.canMove = () => this.sessionList.canMoveSelected();
+		this.sessionList.onMoveConfirmationChange = (session) => {
+			this.header.confirmingMove = session;
+			this.requestRender();
+		};
+		this.sessionList.onMoveSession = async (session) => {
+			this.sessionList.moving = true;
+			this.cancelLoads();
+			try {
+				const destination = (options?.moveSession ?? moveSessionHere)(session.path, this.sessionList.moveTarget);
+				this.applyMovedSession(session, destination);
+				this.header.setStatusMessage({ type: "info", message: "Session moved to starting directory" }, 3000);
+			} catch (error) {
+				this.header.setStatusMessage({
+					type: "error",
+					message: `Cannot move: ${error instanceof Error ? error.message : String(error)}`,
+				});
+			} finally {
+				this.sessionList.moving = false;
+				this.requestRender();
+			}
+		};
 
 		this.buildBaseLayout(this.sessionList);
 
@@ -837,20 +908,26 @@ export class SessionSelectorComponent extends Container implements Focusable {
 			const result = await deleteSessionFile(sessionPath);
 
 			if (result.ok) {
-				if (this.currentSessions) {
-					this.currentSessions = this.currentSessions.filter((s) => s.path !== sessionPath);
-				}
-				if (this.allSessions) {
-					this.allSessions = this.allSessions.filter((s) => s.path !== sessionPath);
-				}
-
-				const sessions = this.scope === "all" ? (this.allSessions ?? []) : (this.currentSessions ?? []);
-				const showCwd = this.scope === "all";
-				this.sessionList.setSessions(sessions, showCwd);
-
 				const msg = result.method === "trash" ? "Session moved to trash" : "Session deleted";
 				this.header.setStatusMessage({ type: "info", message: msg }, 2000);
-				await this.refreshSessionsAfterMutation();
+				if ((this.scope === "all" ? this.allLoad : this.currentLoad) !== null) {
+					// A load that started before the delete can still hand back the row that was just removed, so
+					// while one is running the list has to be read again. The cursor moves on its own anyway while
+					// rows are arriving, so a reload costs nothing extra here.
+					await this.refreshSessionsAfterMutation();
+				} else {
+					// Otherwise fold the delete into what is already on screen. Re-reading clamps the cursor to the
+					// first page of the reload (see applyMovedSession), which used to send anyone who deleted a row
+					// near the bottom of a long list somewhere into the middle of it.
+					if (this.currentSessions) {
+						this.currentSessions = this.currentSessions.filter((s) => s.path !== sessionPath);
+					}
+					if (this.allSessions) {
+						this.allSessions = this.allSessions.filter((s) => s.path !== sessionPath);
+					}
+					const sessions = (this.scope === "all" ? this.allSessions : this.currentSessions) ?? [];
+					this.sessionList.setSessions(sessions, this.scope === "all");
+				}
 			} else {
 				const errorMessage = result.error ?? "Unknown error";
 				this.header.setStatusMessage({ type: "error", message: `Failed to delete: ${errorMessage}` }, 3000);
@@ -1013,6 +1090,44 @@ export class SessionSelectorComponent extends Container implements Focusable {
 		this.header.setNameFilter(this.nameFilter);
 		this.sessionList.setNameFilter(this.nameFilter);
 		this.requestRender();
+	}
+
+	/**
+	 * Fold a move into the lists already on screen instead of reloading them.
+	 *
+	 * A reload is what made deleting or moving feel like it lost your place: loadScope() reports progress in
+	 * pages, setSessions() clamps the cursor to whatever the current page holds, and the index never grows
+	 * back when the rest of the list lands -- so a cursor at row 38 of 45 ends up around row 19. A move also
+	 * changes the selected row's path, which is the key a reload re-finds the selection by.
+	 *
+	 * Correcting the cached entry in place avoids both: the session is still listed either way, only its
+	 * folder (and, for a real move, its file) changed. The scope that is not on screen is dropped so it
+	 * re-reads lazily when Tab switches to it, since the moved session now belongs there.
+	 */
+	private applyMovedSession(session: SessionInfo, destination: string): void {
+		const cwd = this.sessionList.moveTarget;
+		for (const cached of [this.currentSessions, this.allSessions]) {
+			if (!cached) continue;
+			for (const entry of cached) {
+				if (entry.path === session.path) {
+					entry.path = destination;
+					entry.cwd = cwd;
+				}
+			}
+		}
+		if (this.scope === "all") {
+			this.currentSessions = null;
+		} else {
+			this.allSessions = null;
+		}
+		const sessions = this.scope === "all" ? this.allSessions : this.currentSessions;
+		if (sessions === null) {
+			// Nothing on screen to fold the change into. cancelLoads() drops the cache of any load that was
+			// still running, so moving while the list is arriving is the one case that has to read it again.
+			void this.loadScope(this.scope);
+			return;
+		}
+		this.sessionList.setSessions(sessions, this.scope === "all");
 	}
 
 	private async refreshSessionsAfterMutation(): Promise<void> {

@@ -307,6 +307,10 @@
       "$ref": "#/$defs/KeybindingValue",
       "description": "Rename session"
     },
+    "app.session.move": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Move selected session to the starting directory"
+    },
     "app.session.delete": {
       "$ref": "#/$defs/KeybindingValue",
       "description": "Delete session"

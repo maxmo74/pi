@@ -1,6 +1,9 @@
+import { fork } from "node:child_process";
+import { once } from "node:events";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, parse } from "node:path";
+import { fileURLToPath } from "node:url";
 import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
@@ -192,6 +195,7 @@ describe("AgentSessionRuntime characterization", () => {
 
 		faux.setResponses([fauxAssistantMessage(fauxToolCall("block", {}), { stopReason: "toolUse" })]);
 		const outgoingSession = runtime.session;
+		const outgoingSessionFile = outgoingSession.sessionFile!;
 		const promptPromise = outgoingSession.prompt("start blocking tool");
 		await toolStartedPromise;
 
@@ -202,7 +206,9 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(runtime.session.sessionFile).toBe(firstSessionFile);
 		// The outgoing session settled before replacement: the interrupted tool
 		// call has a persisted tool result instead of dangling forever.
-		const outgoingEntries = SessionManager.open(outgoingSession.sessionFile!)
+		// Its ownership is released during replacement, so the file name captured while the
+		// session was still current identifies it.
+		const outgoingEntries = SessionManager.open(outgoingSessionFile)
 			.getEntries()
 			.filter((entry) => entry.type === "message");
 		expect(outgoingEntries.map((entry) => entry.message.role)).toEqual([
@@ -237,6 +243,33 @@ describe("AgentSessionRuntime characterization", () => {
 		await runtime.importFromJsonl(importPath, tempDir);
 		expect(runtime.session.sessionFile).toBe(join(sessionDir, "orphan.jsonl"));
 		expect(existsSync(join(sessionDir, "orphan-1.jsonl"))).toBe(false);
+	});
+
+	it("refuses to resume a session another process holds, then allows it once released", async () => {
+		const { runtime, tempDir } = await createRuntimeForTest(() => {});
+		const heldPath = join(runtime.session.sessionManager.getSessionDir(), "held-by-other.jsonl");
+		const heldSession = `${JSON.stringify({
+			type: "session",
+			version: 3,
+			id: "held",
+			timestamp: new Date().toISOString(),
+			cwd: tempDir,
+		})}\n`;
+		mkdirSync(runtime.session.sessionManager.getSessionDir(), { recursive: true });
+		writeFileSync(heldPath, heldSession);
+		const holder = fork(fileURLToPath(new URL("../fixtures/session-owner.ts", import.meta.url)), [heldPath], {
+			execArgv: [],
+			silent: true,
+		});
+		await once(holder, "message");
+		// The refusal has to reach the picker as a failed resume, which is what the runtime throws.
+		await expect(runtime.switchSession(heldPath)).rejects.toThrow("open in process");
+		expect(runtime.session.sessionFile).not.toBe(heldPath);
+
+		const released = once(holder, "exit");
+		holder.send("release");
+		await released;
+		expect((await runtime.switchSession(heldPath)).cancelled).toBe(false);
 	});
 
 	it("preserves an existing session when importing a file with the same name", async () => {

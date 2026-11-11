@@ -42,6 +42,11 @@ describe("package commands", () => {
 		return `${major}.${minor}.${Number.parseInt(patch, 10) + 1}`;
 	}
 
+	// A package name an update source may offer to move this install to a renamed package. It stays
+	// inside the running build's npm scope, which is the limit self-update enforces: a name outside it
+	// is somebody else's to publish, so following it would install code this publisher never shipped.
+	const RENAMED_IN_SCOPE = `${PACKAGE_NAME}-next`;
+
 	function prepareManagedInstall(
 		targetVersion: string,
 		npmExitCode = 0,
@@ -101,7 +106,9 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 			"fetch",
 			vi.fn(async (input: string | URL | Request) => {
 				const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-				if (url === "https://pi.dev/api/latest-version") {
+				// Fork build: update checks go to the fork's release asset; pi.dev answers too because a
+				// fork build asks whether upstream moved ahead of the patched release.
+				if (url === "https://pi.dev/api/latest-version" || url.endsWith("/update-info.json")) {
 					return Response.json({ packageName: PACKAGE_NAME, version: targetVersion });
 				}
 				const releaseUrl = `https://example.test/api/installer/releases/${targetVersion}`;
@@ -718,7 +725,8 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 		try {
 			await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
 
-			expect(fetchMock).toHaveBeenCalledOnce();
+			// One request for the fork release, one for pi.dev, which is what an explicit check asks for.
+			expect(fetchMock).toHaveBeenCalledTimes(2);
 			expect(logSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
 				`pi is already up to date (v${VERSION})`,
 			);
@@ -747,11 +755,44 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 
 		try {
 			await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
-			expect(fetchMock).toHaveBeenCalledTimes(3);
+			// Three attempts for the fork release, then one pi.dev request while reporting "up to date".
+			expect(fetchMock).toHaveBeenCalledTimes(4);
 			expect(errorSpy).not.toHaveBeenCalled();
 		} finally {
 			if (previousSkipVersionCheck === undefined) delete process.env.PI_SKIP_VERSION_CHECK;
 			else process.env.PI_SKIP_VERSION_CHECK = previousSkipVersionCheck;
+			logSpy.mockRestore();
+			errorSpy.mockRestore();
+		}
+	});
+
+	it("refuses an update source that names a package outside this build's scope", async () => {
+		// The pointer branch is a git ref, so the package name it carries is data someone else controls.
+		// Leaving the npm scope would let a rewritten pointer name a package anyone can publish into.
+		const targetVersion = getNewerPatchVersion();
+		const { npmRecordPath } = prepareManagedInstall(targetVersion);
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: string | URL | Request) => {
+				const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+				if (url.endsWith("/update-info.json")) {
+					return Response.json({ packageName: "someone-elses-pi", version: targetVersion });
+				}
+				return Response.json({ version: VERSION });
+			}),
+		);
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		try {
+			await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
+
+			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
+			expect(stderr).toContain("Update source offered someone-elses-pi@");
+			expect(stderr).toContain("Refusing to install it.");
+			expect(existsSync(npmRecordPath)).toBe(false);
+			expect(process.exitCode).toBe(1);
+		} finally {
 			logSpy.mockRestore();
 			errorSpy.mockRestore();
 		}
@@ -906,7 +947,7 @@ process.exit(${exitCode});
 		vi.stubEnv("PI_SELF_UPDATE_COMMAND", "pi-wrapper upgrade {installSpec} {version}");
 		vi.stubGlobal(
 			"fetch",
-			vi.fn(async () => Response.json({ packageName: "@new-scope/pi", version: targetVersion, note: "Read me" })),
+			vi.fn(async () => Response.json({ packageName: RENAMED_IN_SCOPE, version: targetVersion, note: "Read me" })),
 		);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -915,7 +956,7 @@ process.exit(${exitCode});
 
 		expect(JSON.parse(readFileSync(recordPath, "utf8")) as string[]).toEqual([
 			"upgrade",
-			`@new-scope/pi@${targetVersion}`,
+			`${RENAMED_IN_SCOPE}@${targetVersion}`,
 			targetVersion,
 		]);
 		expect(existsSync(npmRecordPath)).toBe(false);
@@ -1148,7 +1189,7 @@ else {
 			value: join(selfPackageDir, "dist", "cli.js"),
 			configurable: true,
 		});
-		const activePackageName = PACKAGE_NAME === "@new-scope/pi" ? "@newer-scope/pi" : "@new-scope/pi";
+		const activePackageName = RENAMED_IN_SCOPE;
 		vi.stubGlobal(
 			"fetch",
 			vi.fn(async () => Response.json({ packageName: activePackageName, version: "0.73.0" })),
@@ -1245,7 +1286,7 @@ if(args.includes("install")) process.exit(23);
 			value: join(selfPackageDir, "dist", "cli.js"),
 			configurable: true,
 		});
-		const activePackageName = PACKAGE_NAME === "@new-scope/pi" ? "@newer-scope/pi" : "@new-scope/pi";
+		const activePackageName = RENAMED_IN_SCOPE;
 		vi.stubGlobal(
 			"fetch",
 			vi.fn(async () => Response.json({ packageName: activePackageName, version: "0.73.0" })),

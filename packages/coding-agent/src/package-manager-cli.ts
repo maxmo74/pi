@@ -25,6 +25,7 @@ import {
 	getPackageDir,
 	getSelfUpdateCommand,
 	getSelfUpdateUnavailableInstruction,
+	type InstallMethod,
 	makeConfiguredSelfUpdateCommand,
 	PACKAGE_NAME,
 	type SelfUpdateCommand,
@@ -42,7 +43,15 @@ import { spawnProcess, spawnProcessSync, waitForChildProcess } from "./utils/chi
 import { canonicalizePath, getCwdRelativePath } from "./utils/paths.ts";
 import { getPiUserAgent } from "./utils/pi-user-agent.ts";
 import { stripBom } from "./utils/text.ts";
-import { formatVersionCheckError, getLatestPiRelease, isNewerPackageVersion } from "./utils/version-check.ts";
+import {
+	formatUpstreamAheadNotice,
+	formatUpstreamAheadTitle,
+	formatVersionCheckError,
+	getLatestPiRelease,
+	getUpstreamPiRelease,
+	isNewerPackageVersion,
+	upstreamVersionAhead,
+} from "./utils/version-check.ts";
 import {
 	cleanupWindowsSelfUpdateQuarantine,
 	quarantineWindowsNativeDependencies,
@@ -55,6 +64,31 @@ type UpdateTarget = { type: "all" } | { type: "self" } | { type: "extensions"; s
 const DEFAULT_INSTALLER_API_BASE = "https://pi.dev/api/installer/releases";
 const MANAGED_INSTALL_MARKER = "managed-install.json";
 const MANAGED_RELEASE_VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+// The package upstream publishes and whose installer manages installs. PACKAGE_NAME comes from the
+// installed package.json, so a repackaged build differs from this and must not be sent to pi.dev.
+const OFFICIAL_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
+
+// Advice printed after a successful self-update. Exported for tests, because this is the one place the fork has to
+// diverge from upstream's update path: a rebase that drops the package-name check silently sends every fork
+// install to pi.dev's installer, which installs the official package over the patched one.
+export function getSelfUpdateAdvice(
+	installMethod: InstallMethod,
+	packageName: string,
+	platform: NodeJS.Platform,
+): { notes: string[]; command: string } | undefined {
+	// pi.dev's installer only migrates npm installs, and only installs the package it knows about.
+	if (installMethod !== "npm" || packageName !== OFFICIAL_PACKAGE_NAME) return undefined;
+	return {
+		notes: [
+			`This npm installation of ${APP_NAME} does not pin its dependencies.`,
+			"Run the installer to migrate to a managed installation that does:",
+		],
+		command:
+			platform === "win32"
+				? 'powershell -c "irm https://pi.dev/install.ps1 | iex"'
+				: "curl -fsSL https://pi.dev/install.sh | sh",
+	};
+}
 
 function getActiveManagedInstallRoot(): string | undefined {
 	const configuredRoot = process.env.PI_MANAGED_INSTALL_ROOT?.trim();
@@ -715,7 +749,24 @@ async function getSelfUpdatePlan(force: boolean): Promise<SelfUpdatePlan> {
 		throw new Error(`Could not determine latest ${APP_NAME} version.`);
 	}
 
-	const packageName = latestRelease.packageName ?? PACKAGE_NAME;
+	// The update source is a git branch, so it may move this install to a renamed package but not out
+	// of the npm scope the publisher controls: a foreign-scope or unscoped name is first-come-first-
+	// served on the registry, so following one there would install whatever someone else published
+	// under it. Upstream renames inside its own scope; the same limit is what makes a rewritten
+	// update pointer harmless here.
+	const offeredPackageName = latestRelease.packageName;
+	const scopeEnd = PACKAGE_NAME.indexOf("/");
+	const updateScope = PACKAGE_NAME.startsWith("@") && scopeEnd > 0 ? PACKAGE_NAME.slice(0, scopeEnd) : undefined;
+	if (
+		offeredPackageName !== undefined &&
+		offeredPackageName !== PACKAGE_NAME &&
+		!(updateScope && offeredPackageName.startsWith(`${updateScope}/`))
+	) {
+		throw new Error(
+			`Update source offered ${offeredPackageName}@${latestRelease.version}, which is outside ${updateScope ?? PACKAGE_NAME}. Refusing to install it.`,
+		);
+	}
+	const packageName = offeredPackageName ?? PACKAGE_NAME;
 	const installSpec = `${packageName}@${latestRelease.version}`;
 	if (force || packageName !== PACKAGE_NAME || isNewerPackageVersion(latestRelease.version, VERSION)) {
 		return {
@@ -728,6 +779,14 @@ async function getSelfUpdatePlan(force: boolean): Promise<SelfUpdatePlan> {
 	}
 
 	console.log(chalk.green(`${APP_NAME} is already up to date (v${VERSION})`));
+	// The fork endpoint only ever offers patched builds, so explain when pi.dev has moved further.
+	// One extra request, and only on this path: the fork release is already in hand above.
+	const upstreamRelease = await getUpstreamPiRelease(VERSION).catch(() => undefined);
+	const upstreamVersion = upstreamVersionAhead(VERSION, upstreamRelease);
+	if (upstreamVersion) {
+		console.log(chalk.yellow(formatUpstreamAheadTitle(upstreamVersion)));
+		console.log(chalk.dim(formatUpstreamAheadNotice(VERSION, upstreamVersion)));
+	}
 	return { packageName, installSpec, version: latestRelease.version, shouldRun: false };
 }
 
@@ -1224,16 +1283,17 @@ export async function handlePackageCommand(
 					console.log(chalk.green(`Updated ${APP_NAME} from ${VERSION} to ${selfUpdatePlan.version}`));
 					// The pi.dev installer migrates global npm installs to a managed install
 					// that pins all dependencies. It does not migrate pnpm, yarn, or bun installs.
-					if (installMethod === "npm") {
-						const installerCommand =
-							process.platform === "win32"
-								? 'powershell -c "irm https://pi.dev/install.ps1 | iex"'
-								: "curl -fsSL https://pi.dev/install.sh | sh";
+					// A build published under another name has no managed installer: pi.dev's installer
+					// would install the official package over it and silently drop every patch, so the
+					// only instruction that is true here is the one that just worked.
+					const advice = getSelfUpdateAdvice(installMethod, PACKAGE_NAME, process.platform);
+					if (advice) {
 						console.log();
-						console.log(chalk.yellow(`This npm installation of ${APP_NAME} does not pin its dependencies.`));
-						console.log(chalk.yellow("Run the installer to migrate to a managed installation that does:"));
+						for (const note of advice.notes) {
+							console.log(chalk.yellow(note));
+						}
 						console.log();
-						console.log(`  ${chalk.bold(installerCommand)}`);
+						console.log(`  ${chalk.bold(advice.command)}`);
 					}
 				}
 				return true;
