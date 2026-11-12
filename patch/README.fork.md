@@ -17,4 +17,4 @@ back. Do not run pi.dev's installer on a machine that should keep this build: it
 Pi over it.
 
 Everything else is upstream. The full list of changes, and why they live here rather than upstream:
-[FORK.md](https://github.com/maxmo74/pi/blob/release/v1.5.0/FORK.md).
+[FORK.md](https://github.com/maxmo74/pi/blob/HEAD/FORK.md).

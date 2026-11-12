@@ -20,6 +20,7 @@ This is the whole fork. Everything is under `packages/coding-agent/` except the 
 | A session whose file is already stored in the starting directory, but whose header names another one, is relabelled in place. Moving it used to refuse with "storage paths are identical", which was true and useless: the header was the only thing wrong. | `src/core/session-move.ts` |
 | Release tooling: build, rename, publish, and a model catalog pinned by digest so a tag rebuilds identically. Build-time only, nothing here runs in pi. | `scripts/publish-patched.mjs`, `.github/workflows/publish.yml`, `patch/` |
 | This file, and the notice prepended to the published README. | `FORK.md`, `patch/README.fork.md` |
+| The repository README replaces upstream's, so someone landing on the fork is not handed upstream's install instructions and package name as if they were ours. It is not packed into npm, so it changes nothing about installs. On a merge, keep ours; upstream's edits to it are documentation that lives at pi.dev anyway. | `README.md` |
 
 ## Why these are not upstream
 
