@@ -264,7 +264,19 @@ function collectLiveOwners(): LiveOwner[] {
 			removeStaleRecord(join(root, file));
 			continue;
 		}
-		const record: unknown = JSON.parse(readFileSync(join(root, file), "utf8"));
+		let raw: string;
+		try {
+			raw = readFileSync(join(root, file), "utf8");
+		} catch (error) {
+			// The owner removed its record after readdir listed it, which means it exited: the same
+			// conclusion the missing-process check above reaches. Concurrent scanners hit this routinely,
+			// and without it the scan throws, so every gate that asks who holds a session fails with a
+			// filesystem error instead of an answer.
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+			removeStaleRecord(join(root, file));
+			continue;
+		}
+		const record: unknown = JSON.parse(raw);
 		if (
 			!record ||
 			typeof record !== "object" ||
