@@ -41,6 +41,9 @@ function createSessionWithMissingModel(projectDir: string, sessionDir: string): 
 	});
 	const sessionFile = sessionManager.getSessionFile();
 	if (!sessionFile) throw new Error("session was not persisted");
+	// Release this process's claim on the file. The test below hands the same path to a spawned pi, and
+	// this fork refuses to open a session another process holds open.
+	sessionManager.dispose();
 	return sessionFile;
 }
 

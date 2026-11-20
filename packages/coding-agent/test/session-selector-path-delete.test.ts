@@ -88,9 +88,17 @@ const CTRL_BACKSPACE = "\x1b[127;5u";
 
 // The delete handler under test calls this; the file it names is irrelevant to what is being asserted, which
 // is what the picker does to its own lists once a delete succeeds.
-vi.mock("../src/core/session-delete.ts", () => ({
-	deleteSessionFile: vi.fn(() => ({ ok: true as const, method: "unlink" as const })),
-}));
+vi.mock("../src/core/session-delete.ts", async () => {
+	const { existsSync, unlinkSync } = await import("node:fs");
+	return {
+		// Removes the file, the way the real module's unlink fallback does, without spawning `trash`.
+		// A stub that only returned success hid the delete from anything asserting on the filesystem.
+		deleteSessionFile: vi.fn((sessionPath: string) => {
+			if (existsSync(sessionPath)) unlinkSync(sessionPath);
+			return { ok: true as const, method: "unlink" as const };
+		}),
+	};
+});
 
 /** The text of the row the cursor is on, in a rendered picker. */
 function selectedRowText(rendered: string): string {
