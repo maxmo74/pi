@@ -38,8 +38,8 @@ upstream's documentation — this README deliberately does not duplicate it.
 
 - **Do not run pi.dev's installer** on a machine that should keep this build. It installs official Pi
   over it.
-- **A version here is not an upstream version.** They read `<upstream>-max.<build>`: `1.5.2-max.15` is
-  upstream 1.5.2, the fifteenth build of this fork. The build number counts every build of the fork and
+- **A version here is not an upstream version.** They read `<upstream>-max.<build>`: `1.6.0-max.16` is
+  upstream 1.6.0, the sixteenth build of this fork. The build number counts every build of the fork and
   never resets, so it names exactly one published artifact.
 
 ## How builds are published
