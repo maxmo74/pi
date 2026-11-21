@@ -56,6 +56,16 @@ CI, Nix, npm audit, model-catalog publishing, preview packages and the issue and
 disabled, because they build or publish things this fork does not ship, and several of them act on
 issues. `gh workflow enable "<name>"` reverses any of them.
 
+A merge of a new upstream release can add workflow files, and GitHub registers those **enabled**. Anything
+on a `schedule` then runs from the default branch, which is a release line, so a fork with no signing
+secrets nightly-fails an upstream macOS app build. Re-check after every merge:
+
+```
+gh api repos/maxmo74/pi/actions/workflows --jq '.workflows[]
+  | select(.state=="active" and .name != "Publish patched build") | .name'
+  | while read -r w; do gh workflow disable "$w" --repo maxmo74/pi; done
+```
+
 ## Testing
 
 `npm run check`, plus the coding-agent suite. Upstream's `./test.sh` needs a Rust toolchain for
